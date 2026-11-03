@@ -3,8 +3,12 @@ import time
 from unittest.mock import patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
 from werkzeug.test import EnvironBuilder
+
+try:  # v16
+	from frappe.tests import IntegrationTestCase as FrappeTestCase
+except ImportError:  # v15
+	from frappe.tests.utils import FrappeTestCase
 
 from accounts_intelligence.auth import ALLOWED_SITE, AUTH_LOG, SETTINGS, keys, server, signing
 from accounts_intelligence.auth.urls import InvalidURL, canonical_url
