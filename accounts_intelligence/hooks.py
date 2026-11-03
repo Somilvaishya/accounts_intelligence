@@ -10,6 +10,9 @@ app_license = "mit"
 
 required_apps = ["frappe", "erpnext"]
 
+# Auth log rows are kept for 180 days, then removed by Frappe's log cleanup.
+default_log_clearing_doctypes = {"Accounts Intelligence Auth Log": 180}
+
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{
@@ -246,4 +249,3 @@ required_apps = ["frappe", "erpnext"]
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-
