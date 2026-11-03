@@ -1,0 +1,166 @@
+{
+ "actions": [],
+ "creation": "2026-11-03 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "this_site_section",
+  "mode",
+  "site_url",
+  "allow_http_for_testing",
+  "identity_column",
+  "key_fingerprint",
+  "public_key",
+  "key_created_on",
+  "private_key",
+  "client_section",
+  "server_url",
+  "connection_status",
+  "last_connected_on",
+  "server_column",
+  "server_fingerprint",
+  "server_public_key",
+  "last_error",
+  "server_section",
+  "allowed_sites"
+ ],
+ "fields": [
+  {
+   "fieldname": "this_site_section",
+   "fieldtype": "Section Break",
+   "label": "This site"
+  },
+  {
+   "description": "Server: the group site that receives data from company sites. Client: a company site that sends its data to the server.",
+   "fieldname": "mode",
+   "fieldtype": "Select",
+   "label": "Mode",
+   "options": "\nClient\nServer"
+  },
+  {
+   "description": "The address other sites use to reach this site, like https://erp.example.com. Left empty, it is taken from the site's host_name. The other site must have it saved exactly the same way.",
+   "fieldname": "site_url",
+   "fieldtype": "Data",
+   "label": "This Site's URL"
+  },
+  {
+   "default": "0",
+   "description": "Lets http:// addresses through for local testing. It has no effect unless the bench is in developer mode. Never turn it on in production.",
+   "fieldname": "allow_http_for_testing",
+   "fieldtype": "Check",
+   "label": "Allow Plain HTTP (Testing Only)"
+  },
+  {
+   "fieldname": "identity_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Created when the mode is first saved. The other site's admin compares this before approving or connecting.",
+   "fieldname": "key_fingerprint",
+   "fieldtype": "Data",
+   "label": "This Site's Key Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "public_key",
+   "fieldtype": "Small Text",
+   "label": "This Site's Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "key_created_on",
+   "fieldtype": "Datetime",
+   "label": "Key Created On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "private_key",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Private Key",
+   "length": 255
+  },
+  {
+   "depends_on": "eval:doc.mode=='Client'",
+   "fieldname": "client_section",
+   "fieldtype": "Section Break",
+   "label": "Connection to Server"
+  },
+  {
+   "description": "The group server's address, like https://group.example.com",
+   "fieldname": "server_url",
+   "fieldtype": "Data",
+   "label": "Server URL",
+   "mandatory_depends_on": "eval:doc.mode=='Client'"
+  },
+  {
+   "default": "Not connected",
+   "fieldname": "connection_status",
+   "fieldtype": "Select",
+   "label": "Connection Status",
+   "options": "Not connected\nWaiting for approval\nConnected\nNot authorised\nError",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_connected_on",
+   "fieldtype": "Datetime",
+   "label": "Last Connected On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "server_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Saved the first time this site connects. If the server ever shows a different key, connecting stops.",
+   "fieldname": "server_fingerprint",
+   "fieldtype": "Data",
+   "label": "Server Key Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "server_public_key",
+   "fieldtype": "Small Text",
+   "label": "Server Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_error",
+   "fieldtype": "Small Text",
+   "label": "Last Error",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.mode=='Server'",
+   "description": "Only sites on this list can connect. Add a site's exact URL, ask its admin to click Connect, compare fingerprints, then select the row and approve it.",
+   "fieldname": "server_section",
+   "fieldtype": "Section Break",
+   "label": "Allowed Client Sites"
+  },
+  {
+   "fieldname": "allowed_sites",
+   "fieldtype": "Table",
+   "label": "Allowed Sites",
+   "options": "Accounts Intelligence Allowed Site"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-03 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounts Intelligence",
+ "name": "Accounts Intelligence Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
