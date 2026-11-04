@@ -296,3 +296,18 @@ class TestHandlerError(FrappeTestCase):
 			frappe.db.exists(AUTH_LOG, {"event": "Crash test", "result": "Error", "site_url": CLIENT})
 		)
 		self.assertTrue(frappe.db.exists("Error Log", {"method": "Accounts Intelligence: Crash test failed"}))
+
+
+class TestPlainHTTPMessage(FrappeTestCase):
+	def test_turning_http_off_lists_every_http_address_at_once(self):
+		_reset_settings(row_status="Active", row_key=keys.generate_keypair()[1])
+		frappe.db.set_single_value(SETTINGS, "site_url", "http://127.0.0.1:8000")
+		frappe.db.set_value(ALLOWED_SITE, _row().name, "site_url", "http://localhost:8001")
+		settings = frappe.get_single(SETTINGS)
+		settings.allow_http_for_testing = 0
+		with self.assertRaises(frappe.ValidationError) as caught:
+			settings.save()
+		message = str(caught.exception)
+		self.assertIn("http://127.0.0.1:8000", message)
+		self.assertIn("http://localhost:8001", message)
+		self.assertIn("Reset Selected", message, "a connected site must be told to reset first")

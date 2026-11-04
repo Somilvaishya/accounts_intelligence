@@ -1,10 +1,10 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import now_datetime
+from frappe.utils import escape_html, now_datetime
 
 from accounts_intelligence.auth import audit, keys
-from accounts_intelligence.auth.urls import InvalidURL, canonical_url
+from accounts_intelligence.auth.urls import InvalidURL, canonical_url, http_allowed
 
 # Written only by the key setup and the connection actions, never by a form save.
 MANAGED_FIELDS = (
@@ -37,6 +37,7 @@ class AccountsIntelligenceSettings(Document):
 		before = self.get_doc_before_save()
 		self._keep_managed_fields(before)
 		self._check_mode_change(before)
+		self._check_plain_http(before)
 		self._clean_urls(before)
 		self._check_site_url_change(before)
 		self._clean_allowed_sites(before)
@@ -71,6 +72,43 @@ class AccountsIntelligenceSettings(Document):
 					"Reset connection on a client, or reset every allowed site on a server."
 				).format(before.mode)
 			)
+
+	def _check_plain_http(self, before):
+		# List every http:// address in one message, so turning plain HTTP off takes one round of edits
+		# instead of one failed save per address.
+		if http_allowed(self.allow_http_for_testing):
+			return
+		found = []
+		if _is_http(self.site_url):
+			found.append(_("This Site's URL: {0}").format(self.site_url))
+		if _is_http(self.server_url):
+			found.append(_("Server URL: {0}").format(self.server_url))
+		for row in self.allowed_sites:
+			if _is_http(row.site_url):
+				found.append(_("Allowed site in row {0}: {1}").format(row.idx, row.site_url))
+		if not found:
+			return
+		if self.allow_http_for_testing:
+			intro = _(
+				"Allow Plain HTTP is on, but this bench is not in developer mode, so http:// is refused."
+			)
+		else:
+			intro = _("Allow Plain HTTP is off, but these addresses still use http://.")
+		steps = [_("Change each address to its https:// form, then save.")]
+		if before and _has_connections(before):
+			steps.insert(
+				0,
+				_(
+					"This site has connections, so its URL cannot change yet. Reset them first: Reset Selected "
+					"on each allowed site, or Reset Connection on a client."
+				),
+			)
+		steps.append(_("Remove allowed sites that have no https:// address, such as local test sites."))
+		items = "".join(f"<li>{escape_html(line)}</li>" for line in found)
+		frappe.throw(
+			f"<p>{escape_html(intro)}</p><ul>{items}</ul><p>{'<br>'.join(escape_html(s) for s in steps)}</p>",
+			title=_("Plain HTTP is not allowed"),
+		)
 
 	def _clean_urls(self, before):
 		if self.site_url or self.mode:
@@ -140,6 +178,10 @@ class AccountsIntelligenceSettings(Document):
 			return canonical_url(value, allow_http=self.allow_http_for_testing)
 		except InvalidURL as e:
 			frappe.throw(_("{0}: {1}").format(label, e))
+
+
+def _is_http(value) -> bool:
+	return (value or "").strip().lower().startswith("http://")
 
 
 def _has_connections(doc) -> bool:
