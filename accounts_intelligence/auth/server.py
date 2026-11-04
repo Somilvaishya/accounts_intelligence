@@ -5,6 +5,7 @@ on the allowed list. Every rejection gets the same 401 reply; the reason goes to
 """
 
 import json
+import time
 from dataclasses import dataclass
 
 import frappe
@@ -33,9 +34,16 @@ class SignedRequest:
 	nonce: str
 
 
-def handle(event: str, handler, connect=False):
-	"""Verify the current request, run the handler, and sign its result for the caller."""
+def handle(event: str, handler, connect=False, limit_per_minute=600):
+	"""Verify the current request, run the handler, and sign its result for the caller.
+
+	`limit_per_minute` caps the endpoint for all callers together. Frappe's per-IP limit relies on
+	X-Forwarded-For, which a caller can set, so this cap is what bounds a flood.
+	"""
 	claimed_site = (frappe.get_request_header(signing.HEADER_SITE) or "")[:140]
+	if over_limit(event, limit_per_minute):
+		audit.log_rejection(event, claimed_site, "endpoint limit reached")
+		return throttled()
 	try:
 		request = verify_request(connect=connect)
 		private_key = get_decrypted_password(SETTINGS, SETTINGS, "private_key", raise_exception=False)
@@ -43,7 +51,7 @@ def handle(event: str, handler, connect=False):
 			raise Rejected("this server has no private key")
 		result = handler(request)
 	except Rejected as e:
-		audit.log(event, "Rejected", site_url=claimed_site, reason=e.reason)
+		audit.log_rejection(event, claimed_site, e.reason)
 		return deny()
 	audit.log(
 		event, "Accepted", site_url=request.row.site_url, fingerprint=keys.fingerprint(request.public_key)
@@ -54,6 +62,19 @@ def handle(event: str, handler, connect=False):
 def deny():
 	frappe.local.response["http_status_code"] = 401
 	return {"ok": False, "error": "not_authorised"}
+
+
+def throttled():
+	frappe.local.response["http_status_code"] = 429
+	return {"ok": False, "error": "rate_limited"}
+
+
+def over_limit(event: str, limit_per_minute: int) -> bool:
+	"""Count a request against a one-minute window shared by every caller of this endpoint."""
+	window = int(time.time() // 60)
+	key = frappe.cache.make_key(f"accounts_intelligence:limit:{event}:{window}")
+	frappe.cache.set(key, 0, ex=120, nx=True)
+	return frappe.cache.incr(key) > limit_per_minute
 
 
 def verify_request(connect=False) -> SignedRequest:

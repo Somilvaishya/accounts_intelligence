@@ -38,6 +38,7 @@ class AccountsIntelligenceSettings(Document):
 		self._keep_managed_fields(before)
 		self._check_mode_change(before)
 		self._clean_urls(before)
+		self._check_site_url_change(before)
 		self._clean_allowed_sites(before)
 		if self.mode and not self.public_key:
 			self._create_identity()
@@ -79,6 +80,19 @@ class AccountsIntelligenceSettings(Document):
 			self.connection_status = "Not connected"
 			self.last_connected_on = None
 			self.last_error = None
+
+	def _check_site_url_change(self, before):
+		# The site URL is signed into every request, so changing it while connected silently breaks the
+		# connection: a server's clients would all be refused, and a client would be unknown to its server.
+		if not before or not before.site_url or before.site_url == self.site_url:
+			return
+		if _has_connections(before):
+			frappe.throw(
+				_(
+					"This site's URL cannot change while it has connections. Reset them first, change the "
+					"URL, then connect again. On a server, also update the URL on every client."
+				)
+			)
 
 	def _clean_allowed_sites(self, before):
 		previous = {row.name: row for row in (before.allowed_sites if before else [])}

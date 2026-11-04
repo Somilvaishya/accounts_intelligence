@@ -13,6 +13,9 @@ required_apps = ["frappe", "erpnext"]
 # Auth log rows are kept for 180 days, then removed by Frappe's log cleanup.
 default_log_clearing_doctypes = {"Accounts Intelligence Auth Log": 180}
 
+# Refuse to hand this app's private keys to API callers; every other Password field works as before.
+override_whitelisted_methods = {"frappe.client.get_password": "accounts_intelligence.overrides.get_password"}
+
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{

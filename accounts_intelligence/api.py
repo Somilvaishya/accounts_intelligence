@@ -14,6 +14,8 @@ def identity():
 	During a key rotation a client also publishes the key it is about to switch to, which is how the
 	server confirms that the new key really belongs to this site.
 	"""
+	if server.over_limit("Identity", 300):
+		return server.throttled()
 	settings = frappe.db.get_value(
 		SETTINGS, SETTINGS, ["mode", "site_url", "public_key", "pending_public_key"], as_dict=True
 	)
@@ -35,16 +37,16 @@ def identity():
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=10, seconds=60)
 def connect():
-	return server.handle("Connect", server.connect_handler, connect=True)
+	return server.handle("Connect", server.connect_handler, connect=True, limit_per_minute=60)
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=60, seconds=60)
 def ping():
-	return server.handle("Ping", server.ping_handler)
+	return server.handle("Ping", server.ping_handler, limit_per_minute=600)
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=10, seconds=60)
 def rotate_key():
-	return server.handle("Rotate key", server.rotate_handler)
+	return server.handle("Rotate key", server.rotate_handler, limit_per_minute=60)

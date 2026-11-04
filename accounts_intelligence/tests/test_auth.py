@@ -55,6 +55,12 @@ def _reset_settings(mode="Server", row_status="Active", row_key=None):
 	frappe.get_single(SETTINGS).save()
 
 
+def clear_counters():
+	"""Rejection and endpoint counters live in Redis and survive test rollbacks."""
+	frappe.cache.delete_keys("accounts_intelligence:rejected:")
+	frappe.cache.delete_keys("accounts_intelligence:limit:")
+
+
 def _row():
 	return frappe.db.get_value(ALLOWED_SITE, {"parent": SETTINGS, "site_url": CLIENT}, "*", as_dict=True)
 
@@ -268,6 +274,7 @@ class TestConnect(FrappeTestCase):
 		self.assertIn("different key", caught.exception.reason)
 
 	def test_rejection_is_logged_and_answered_with_a_plain_401(self):
+		clear_counters()
 		frappe.local.request = EnvironBuilder(path=CONNECT, method="POST", data=b"{}").get_request()
 		frappe.local.response = frappe._dict()
 		reply = server.handle("Connect", server.connect_handler, connect=True)

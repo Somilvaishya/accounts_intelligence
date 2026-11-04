@@ -134,8 +134,13 @@ function act(frm, method, label) {
 		server_revoke: __("Revoked sites are refused at once. To let one back in, reset it and approve it again."),
 		server_reset: __("The site's key is forgotten. It must connect and be approved again."),
 	};
+	const args = { rows: rows.map((r) => r.name) };
+	if (method === "server_approve") {
+		// Send the fingerprints shown above, so the server refuses a key that changed since then.
+		args.fingerprints = Object.fromEntries(rows.map((r) => [r.name, r.fingerprint || ""]));
+	}
 	frappe.confirm(`<p>${label}:</p><ul>${lines}</ul><p>${notes[method]}</p>`, () => {
-		run(frm, method, { rows: rows.map((r) => r.name) });
+		run(frm, method, args);
 	});
 }
 

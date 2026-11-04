@@ -286,8 +286,10 @@ def _client_failed(event, settings, message, status="Error"):
 
 
 @frappe.whitelist(methods=["POST"])
-def server_approve(rows):
-	return _server_update(rows, "Approve")
+def server_approve(rows, fingerprints=None):
+	"""Approve waiting sites. `fingerprints` maps each row to the fingerprint the admin compared, so a key
+	that changed after the admin looked is never approved."""
+	return _server_update(rows, "Approve", fingerprints)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -300,13 +302,16 @@ def server_reset(rows):
 	return _server_update(rows, "Reset")
 
 
-def _server_update(rows, action):
+def _server_update(rows, action, fingerprints=None):
 	frappe.only_for("System Manager")
 	if frappe.db.get_single_value(SETTINGS, "mode") != "Server":
 		frappe.throw(_("This site is not in Server mode."))
 	names = frappe.parse_json(rows) if isinstance(rows, str) else rows
 	if not isinstance(names, list) or not names:
 		frappe.throw(_("Select one or more sites first."))
+	seen = (frappe.parse_json(fingerprints) if isinstance(fingerprints, str) else fingerprints) or {}
+	if not isinstance(seen, dict):
+		frappe.throw(_("Reload the settings and try again."))
 
 	done = []
 	for name in names:
@@ -327,6 +332,13 @@ def _server_update(rows, action):
 				)
 			if not row.enabled:
 				frappe.throw(_("{0} is disabled. Enable it before approving.").format(row.site_url))
+			if seen.get(row.name) != row.fingerprint:
+				frappe.throw(
+					_(
+						"{0} sent a different key after this page was loaded. Reload, compare the new "
+						"fingerprint with that site again, then approve."
+					).format(row.site_url)
+				)
 			values = {"status": "Active", "approved_on": now_datetime(), "approved_by": frappe.session.user}
 		elif action == "Revoke":
 			values = {"status": "Revoked"}
