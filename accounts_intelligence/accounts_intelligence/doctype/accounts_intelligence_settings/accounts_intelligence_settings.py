@@ -46,6 +46,14 @@ class AccountsIntelligenceSettings(Document):
 	def on_update(self):
 		if self.flags.identity_created:
 			audit.log("Key created", "Accepted", site_url=self.site_url, fingerprint=self.key_fingerprint)
+		for row in self.flags.removed_sites or ():
+			audit.log(
+				"Site removed",
+				"Accepted",
+				site_url=row.site_url,
+				fingerprint=row.fingerprint,
+				reason=f"status was {row.status}",
+			)
 
 	def _keep_managed_fields(self, before):
 		for field in MANAGED_FIELDS:
@@ -114,6 +122,10 @@ class AccountsIntelligenceSettings(Document):
 				for field in MANAGED_ROW_FIELDS:
 					row.set(field, None)
 				row.status = "Pending"
+
+		# A deleted row, or a row whose address changed, takes that site off the list.
+		kept = {row.name: row.site_url for row in self.allowed_sites}
+		self.flags.removed_sites = [old for name, old in previous.items() if kept.get(name) != old.site_url]
 
 	def _create_identity(self):
 		private_key, public_key = keys.generate_keypair()

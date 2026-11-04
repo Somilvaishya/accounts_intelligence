@@ -82,6 +82,8 @@ def client_reset():
 			"last_error": None,
 		},
 	)
+	# Otherwise identity keeps publishing the key of a half-finished rotation as next_public_key.
+	_clear_pending()
 	audit.log("Client reset", "Accepted")
 	return {"ok": True}
 
@@ -123,6 +125,17 @@ def client_rotate_key():
 		return _rotation_failed(
 			settings,
 			_("The server refused the new key. This site keeps its current key. See the server's Auth Log."),
+		)
+	except transport.Refused as e:
+		# Any other 4xx means the server did not switch. The usual cause is a server app without rotate_key.
+		_clear_pending()
+		return _rotation_failed(
+			settings,
+			_(
+				"The server did not accept the rotation ({0}). It may run an older version of Accounts "
+				"Intelligence without key rotation: update the app on the server, then try again. This site "
+				"keeps its current key."
+			).format(e),
 		)
 	except transport.TransportError as e:
 		# The server may or may not have switched, so the new key is kept for the next attempt.
@@ -203,7 +216,7 @@ def _server_accepts(settings, key_pair):
 	try:
 		transport.post_signed(settings, "ping", {}, key_pair=key_pair)
 		return True
-	except transport.NotAuthorised:
+	except transport.Refused:
 		return False
 	except transport.TransportError:
 		return None

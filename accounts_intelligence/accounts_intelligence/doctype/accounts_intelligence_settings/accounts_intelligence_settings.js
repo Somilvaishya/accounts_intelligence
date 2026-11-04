@@ -9,6 +9,8 @@ const STATUS_COLOUR = {
 
 frappe.ui.form.on("Accounts Intelligence Settings", {
 	refresh(frm) {
+		// Plain HTTP only works in developer mode. Elsewhere the switch is shown only while it is on, so it can be turned off.
+		frm.toggle_display("allow_http_for_testing", Boolean(frappe.boot.developer_mode || frm.doc.allow_http_for_testing));
 		frm.set_intro("");
 		if (!frm.doc.mode) {
 			frm.set_intro(__("Choose this site's mode and save. A key pair for this site is created on the first save."), "blue");

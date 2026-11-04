@@ -18,6 +18,8 @@ from accounts_intelligence.auth.urls import InvalidURL, canonical_url
 MAX_BODY = 1024 * 1024
 LAST_SEEN_EVERY = 60
 ROW_FIELDS = ["name", "site_url", "enabled", "status", "public_key", "last_seen"]
+SETTINGS_FIELDS = ["mode", "site_url", "allow_http_for_testing"]
+HANDLER_SAVEPOINT = "accounts_intelligence_handler"
 
 
 class Rejected(Exception):
@@ -45,6 +47,7 @@ def handle(event: str, handler, connect=False, limit_per_minute=600):
 		audit.log_rejection(event, claimed_site, "endpoint limit reached")
 		return throttled()
 	try:
+		frappe.db.savepoint(HANDLER_SAVEPOINT)
 		request = verify_request(connect=connect)
 		private_key = get_decrypted_password(SETTINGS, SETTINGS, "private_key", raise_exception=False)
 		if not private_key:
@@ -53,6 +56,12 @@ def handle(event: str, handler, connect=False, limit_per_minute=600):
 	except Rejected as e:
 		audit.log_rejection(event, claimed_site, e.reason)
 		return deny()
+	except Exception:
+		# Undo the handler's partial writes, keep the details on this site and tell the caller nothing.
+		frappe.db.rollback(save_point=HANDLER_SAVEPOINT)
+		frappe.log_error(title=f"Accounts Intelligence: {event} failed")
+		audit.log(event, "Error", site_url=claimed_site, reason="unexpected error, see Error Log")
+		return server_error()
 	audit.log(
 		event, "Accepted", site_url=request.row.site_url, fingerprint=keys.fingerprint(request.public_key)
 	)
@@ -62,6 +71,11 @@ def handle(event: str, handler, connect=False, limit_per_minute=600):
 def deny():
 	frappe.local.response["http_status_code"] = 401
 	return {"ok": False, "error": "not_authorised"}
+
+
+def server_error():
+	frappe.local.response["http_status_code"] = 500
+	return {"ok": False, "error": "server_error"}
 
 
 def throttled():
@@ -78,7 +92,8 @@ def over_limit(event: str, limit_per_minute: int) -> bool:
 
 
 def verify_request(connect=False) -> SignedRequest:
-	settings = frappe.get_single(SETTINGS)
+	# Only three values are needed, so the allowed list is not loaded on every request.
+	settings = frappe.db.get_value(SETTINGS, SETTINGS, SETTINGS_FIELDS, as_dict=True) or frappe._dict()
 	if settings.mode != "Server" or not settings.site_url:
 		raise Rejected("this site is not set up as a server")
 	request = frappe.request

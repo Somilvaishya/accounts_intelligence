@@ -12,13 +12,18 @@ METHOD_PATH = "/api/method/accounts_intelligence.api.{0}"
 TIMEOUT = 15
 MAX_IDENTITY = 64 * 1024
 MAX_REPLY = 1024 * 1024
+REDIRECTS = (301, 302, 303, 307, 308)
 
 
 class TransportError(Exception):
 	pass
 
 
-class NotAuthorised(TransportError):
+class Refused(TransportError):
+	"""The server answered 4xx, so it did not act on the request: Frappe rolls back before such a reply."""
+
+
+class NotAuthorised(Refused):
 	pass
 
 
@@ -34,6 +39,8 @@ def fetch_identity(base_url: str) -> dict:
 		)
 	except requests.RequestException as e:
 		raise TransportError(_("Could not reach {0} ({1})").format(base_url, e.__class__.__name__))
+	if response.status_code in REDIRECTS:
+		raise _redirected(response, base_url)
 	if response.status_code != 200:
 		raise TransportError(_("{0} answered with HTTP {1}").format(base_url, response.status_code))
 	data = _json_message(response, MAX_IDENTITY, base_url)
@@ -71,15 +78,25 @@ def post_signed(settings, method: str, data: dict, nonce=None, key_pair=None) ->
 		raise NotAuthorised(_("The server refused the request"))
 	if response.status_code == 429:
 		raise TransportError(_("The server is rate limiting this site. Try again in a minute."))
+	if response.status_code in REDIRECTS:
+		raise _redirected(response, settings.server_url)
 	if response.status_code != 200:
-		raise TransportError(
-			_("{0} answered with HTTP {1}").format(settings.server_url, response.status_code)
-		)
+		error = Refused if 400 <= response.status_code < 500 else TransportError
+		raise error(_("{0} answered with HTTP {1}").format(settings.server_url, response.status_code))
 	envelope = _json_message(response, MAX_REPLY, settings.server_url)
 	try:
 		return signing.open_response(settings.server_public_key, headers[signing.HEADER_NONCE], envelope)
 	except signing.BadSignature as e:
 		raise TransportError(_("The server's reply could not be verified: {0}").format(e))
+
+
+def _redirected(response, base_url: str) -> TransportError:
+	# Redirects are never followed: the address is signed into every request, so it must be the final one.
+	location = (response.headers.get("Location") or "")[:200] or _("another address")
+	response.close()
+	return TransportError(
+		_("{0} redirects to {1}. Use the site's final address instead.").format(base_url, location)
+	)
 
 
 def _json_message(response, limit: int, base_url: str):

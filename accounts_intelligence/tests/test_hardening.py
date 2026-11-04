@@ -1,21 +1,37 @@
 """Tests for the audit fixes: private key export (M1), approval bound to a fingerprint (M2), site URL
-changes while connected (M3), rejection log flooding and endpoint caps (M4), Auth Log indexes (M5)."""
+changes while connected (M3), rejection log flooding and endpoint caps (M4), Auth Log indexes (M5),
+and the low-severity items L1-L7."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
+from frappe.utils.password import remove_encrypted_password
 from werkzeug.test import EnvironBuilder
 
-from accounts_intelligence import overrides
-from accounts_intelligence.auth import ALLOWED_SITE, AUTH_LOG, SETTINGS, admin, audit, keys, server
+from accounts_intelligence import api, overrides
+from accounts_intelligence.auth import (
+	ALLOWED_SITE,
+	AUTH_LOG,
+	SETTINGS,
+	admin,
+	audit,
+	keys,
+	server,
+	signing,
+	transport,
+)
 from accounts_intelligence.tests.test_auth import (
 	CLIENT,
 	CONNECT,
+	PING,
+	SERVER,
 	FrappeTestCase,
 	_reset_settings,
 	_row,
 	clear_counters,
 )
+
+POST_SIGNED = "accounts_intelligence.auth.transport.post_signed"
 
 
 class TestPrivateKeyExport(FrappeTestCase):
@@ -137,3 +153,146 @@ class TestAuthLogIndexes(FrappeTestCase):
 		table = "tabAccounts Intelligence Auth Log"
 		for column in ("creation", "site_url", "result"):
 			self.assertTrue(frappe.db.get_column_index(table, column), column)
+
+
+def _connected_client():
+	"""Settings of a client that is connected to SERVER, with no rotation in progress."""
+	server_public = keys.generate_keypair()[1]
+	frappe.db.delete(ALLOWED_SITE, {"parent": SETTINGS})
+	frappe.db.set_single_value(
+		SETTINGS,
+		{
+			"mode": "Client",
+			"site_url": CLIENT,
+			"server_url": SERVER,
+			"allow_http_for_testing": 0,
+			"server_public_key": server_public,
+			"server_fingerprint": keys.fingerprint(server_public),
+			"connection_status": "Connected",
+			"public_key": None,
+			"key_fingerprint": None,
+			"pending_public_key": None,
+		},
+	)
+	remove_encrypted_password(SETTINGS, SETTINGS, "pending_private_key")
+	frappe.get_single(SETTINGS).save()
+	return frappe.db.get_value(SETTINGS, SETTINGS, "public_key")
+
+
+def _http_reply(status, location=None):
+	return MagicMock(status_code=status, headers={"Location": location} if location else {})
+
+
+class TestVerifyReadsOnlySettingsValues(FrappeTestCase):
+	def setUp(self):
+		self.client_private, self.client_public = keys.generate_keypair()
+		_reset_settings(row_status="Active", row_key=self.client_public)
+
+	def tearDown(self):
+		frappe.local.request = None
+
+	def test_signed_request_is_verified_without_loading_the_settings_document(self):
+		headers = signing.sign_request(
+			self.client_private, self.client_public, "POST", PING, SERVER, CLIENT, b"{}"
+		)
+		frappe.local.request = EnvironBuilder(
+			path=PING, method="POST", headers=headers, data=b"{}"
+		).get_request()
+		with patch.object(frappe, "get_single", side_effect=AssertionError("loads the whole document")):
+			request = server.verify_request()
+		self.assertEqual(request.row.site_url, CLIENT)
+
+
+class TestRotationAgainstAnOlderServer(FrappeTestCase):
+	def setUp(self):
+		self.public = _connected_client()
+
+	def test_other_4xx_is_a_refusal_but_5xx_is_unknown(self):
+		settings = admin._client_settings()
+		with patch("requests.post", return_value=_http_reply(417)):
+			self.assertRaises(transport.Refused, transport.post_signed, settings, "rotate_key", {})
+		with patch("requests.post", return_value=_http_reply(502)):
+			with self.assertRaises(transport.TransportError) as caught:
+				transport.post_signed(settings, "rotate_key", {})
+			self.assertNotIsInstance(caught.exception, transport.Refused)
+
+	def test_server_without_rotate_key_discards_the_new_key(self):
+		with patch(
+			POST_SIGNED, side_effect=transport.Refused("https://server.example.com answered with HTTP 417")
+		):
+			result = admin.client_rotate_key()
+		self.assertFalse(result["ok"])
+		self.assertIn("older version", result["message"])
+		self.assertIsNone(admin._pending_key_pair())
+		self.assertEqual(frappe.db.get_value(SETTINGS, SETTINGS, "public_key"), self.public)
+		self.assertNotIn("next_public_key", api.identity())
+
+
+class TestResetClearsPendingRotation(FrappeTestCase):
+	def test_reset_stops_publishing_the_next_key(self):
+		_connected_client()
+		admin._store_pending(*keys.generate_keypair())
+		self.assertIn("next_public_key", api.identity())
+		admin.client_reset()
+		self.assertIsNone(admin._pending_key_pair())
+		self.assertNotIn("next_public_key", api.identity())
+
+
+class TestRedirectMessage(FrappeTestCase):
+	def test_redirect_names_the_final_address(self):
+		reply = _http_reply(301, "https://erp.example.com/api/method/accounts_intelligence.api.identity")
+		with patch("requests.get", return_value=reply):
+			with self.assertRaises(transport.TransportError) as caught:
+				transport.fetch_identity("https://group.frappe.cloud")
+		self.assertIn("redirects to https://erp.example.com", str(caught.exception))
+		self.assertIn("final address", str(caught.exception))
+
+
+class TestRemovedSitesAreLogged(FrappeTestCase):
+	def test_deleting_an_allowed_site_writes_a_log_row(self):
+		_reset_settings(row_status="Revoked", row_key=keys.generate_keypair()[1])
+		frappe.db.delete(AUTH_LOG, {"event": "Site removed"})
+		settings = frappe.get_single(SETTINGS)
+		settings.allowed_sites = []
+		settings.save()
+		log = frappe.get_all(AUTH_LOG, {"event": "Site removed"}, ["site_url", "reason"])
+		self.assertEqual(log, [{"site_url": CLIENT, "reason": "status was Revoked"}])
+
+	def test_saving_without_changes_logs_nothing(self):
+		_reset_settings(row_status="Pending", row_key=None)
+		frappe.db.delete(AUTH_LOG, {"event": "Site removed"})
+		frappe.get_single(SETTINGS).save()
+		self.assertFalse(frappe.db.exists(AUTH_LOG, {"event": "Site removed"}))
+
+
+class TestHandlerError(FrappeTestCase):
+	def setUp(self):
+		_reset_settings(row_status="Active", row_key=keys.generate_keypair()[1])
+		clear_counters()
+		frappe.local.request = EnvironBuilder(
+			path=PING, method="POST", headers={signing.HEADER_SITE: CLIENT}, data=b"{}"
+		).get_request()
+		frappe.local.response = frappe._dict()
+
+	def tearDown(self):
+		clear_counters()
+		frappe.local.request = None
+
+	def test_unexpected_error_is_logged_undone_and_hidden(self):
+		row = _row()
+
+		def crashing_handler(request):
+			frappe.db.set_value(ALLOWED_SITE, row.name, "status", "Revoked")
+			raise RuntimeError("secret detail")
+
+		signed = server.SignedRequest(row=row, data={}, public_key=row.public_key, nonce="a" * 32)
+		with patch.object(server, "verify_request", return_value=signed):
+			reply = server.handle("Crash test", crashing_handler)
+
+		self.assertEqual(reply, {"ok": False, "error": "server_error"})
+		self.assertEqual(frappe.local.response.get("http_status_code"), 500)
+		self.assertEqual(_row().status, "Active", "the handler's partial write must be undone")
+		self.assertTrue(
+			frappe.db.exists(AUTH_LOG, {"event": "Crash test", "result": "Error", "site_url": CLIENT})
+		)
+		self.assertTrue(frappe.db.exists("Error Log", {"method": "Accounts Intelligence: Crash test failed"}))
