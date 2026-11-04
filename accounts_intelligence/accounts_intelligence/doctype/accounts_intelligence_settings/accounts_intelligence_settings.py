@@ -12,6 +12,8 @@ MANAGED_FIELDS = (
 	"key_fingerprint",
 	"key_created_on",
 	"private_key",
+	"pending_public_key",
+	"pending_private_key",
 	"server_public_key",
 	"server_fingerprint",
 	"connection_status",
@@ -26,6 +28,7 @@ MANAGED_ROW_FIELDS = (
 	"approved_on",
 	"approved_by",
 	"last_seen",
+	"key_rotated_on",
 )
 
 

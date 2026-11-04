@@ -43,9 +43,13 @@ def request_message(method, path, audience, site, timestamp, nonce, body: bytes)
 	).encode()
 
 
-def sign_request(private_key, public_key, method, path, audience, site, body: bytes) -> dict:
+def new_nonce() -> str:
+	return secrets.token_hex(16)
+
+
+def sign_request(private_key, public_key, method, path, audience, site, body: bytes, nonce=None) -> dict:
 	timestamp = int(time.time())
-	nonce = secrets.token_hex(16)
+	nonce = nonce or new_nonce()
 	signature = keys.sign(private_key, request_message(method, path, audience, site, timestamp, nonce, body))
 	return {
 		HEADER_SITE: site,
@@ -54,6 +58,14 @@ def sign_request(private_key, public_key, method, path, audience, site, body: by
 		HEADER_NONCE: nonce,
 		HEADER_SIGNATURE: signature,
 	}
+
+
+def rotation_statement(site, old_public_key, new_public_key, nonce) -> bytes:
+	"""What the new key signs during a key rotation: it binds the new key to the old one, the site and
+	the one request that carries it, so the proof cannot be reused for another site or another request."""
+	return "\n".join(
+		(f"{PROTOCOL}-ROTATE", site, keys.key_id(old_public_key), keys.key_id(new_public_key), nonce)
+	).encode()
 
 
 def response_message(request_nonce, timestamp, payload: str) -> bytes:

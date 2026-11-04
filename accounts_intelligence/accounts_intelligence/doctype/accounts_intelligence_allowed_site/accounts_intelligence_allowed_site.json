@@ -13,7 +13,8 @@
   "requested_on",
   "approved_on",
   "approved_by",
-  "last_seen"
+  "last_seen",
+  "key_rotated_on"
  ],
  "fields": [
   {
@@ -83,11 +84,17 @@
    "fieldtype": "Datetime",
    "label": "Last Seen",
    "read_only": 1
+  },
+  {
+   "fieldname": "key_rotated_on",
+   "fieldtype": "Datetime",
+   "label": "Key Rotated On",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-11-03 12:00:00.000000",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Allowed Site",

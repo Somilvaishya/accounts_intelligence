@@ -180,3 +180,41 @@ def connect_handler(request: SignedRequest) -> dict:
 		update_modified=False,
 	)
 	return {"ok": True, "status": "Pending"}
+
+
+def rotate_handler(request: SignedRequest) -> dict:
+	"""Replace an Active site's key without a new approval.
+
+	Three proofs are required: the request is signed with the current key (verify_request), the new
+	key signs a statement bound to this request, and the site's own URL publishes the new key as its
+	next key. A thief holding only the old private key fails the last check, because they cannot
+	publish a key at the site's address.
+	"""
+	row = request.row
+	new_key = request.data.get("new_public_key")
+	if not keys.is_valid_public_key(new_key):
+		raise Rejected("rotation carries no valid new key")
+	if new_key == request.public_key:
+		raise Rejected("the new key is the same as the current key")
+	statement = signing.rotation_statement(row.site_url, request.public_key, new_key, request.nonce)
+	if not keys.verify(new_key, statement, request.data.get("new_key_signature")):
+		raise Rejected("the new key did not sign the rotation")
+	try:
+		identity = transport.fetch_identity(row.site_url)
+	except transport.TransportError as e:
+		raise Rejected(f"could not confirm the new key at the site address: {e}")
+	if (
+		identity.get("mode") != "Client"
+		or identity.get("site_url") != row.site_url
+		or identity.get("public_key") != request.public_key
+		or identity.get("next_public_key") != new_key
+	):
+		raise Rejected("the site address does not publish this new key")
+	frappe.db.set_value(
+		ALLOWED_SITE,
+		row.name,
+		{"public_key": new_key, "fingerprint": keys.fingerprint(new_key), "key_rotated_on": now_datetime()},
+		update_modified=False,
+	)
+	audit.log("Key rotated", "Accepted", site_url=row.site_url, fingerprint=keys.fingerprint(new_key))
+	return {"ok": True, "status": "Active", "fingerprint": keys.fingerprint(new_key)}

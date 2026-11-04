@@ -16,8 +16,51 @@ frappe.ui.form.on("Accounts Intelligence Settings", {
 		}
 		if (frm.doc.mode === "Client") setup_client(frm);
 		if (frm.doc.mode === "Server") setup_server(frm);
+		setup_key_buttons(frm);
 	},
 });
+
+function setup_key_buttons(frm) {
+	const group = __("Key");
+	if (frm.doc.mode === "Client" && frm.doc.server_public_key && frm.doc.connection_status === "Connected") {
+		frm.add_custom_button(
+			__("Rotate Key"),
+			() => {
+				frappe.confirm(
+					__(
+						"Create a new key for this site and switch to it? The server checks the new key at this site's address and keeps the approval. If it is interrupted, click Rotate Key again."
+					),
+					() => run(frm, "client_rotate_key").then(show_key_result)
+				);
+			},
+			group
+		);
+	}
+	frm.add_custom_button(
+		__("Regenerate Key"),
+		() => {
+			const consequence =
+				frm.doc.mode === "Client"
+					? __("The server stops accepting this site until its admin resets this site's row and approves it again. Use Rotate Key instead unless the current key may be known to someone else.")
+					: __("Every client must click Reset Connection, check the new fingerprint and connect again. Their approvals stay valid.");
+			frappe.confirm(`<p>${__("Replace this site's key pair now?")}</p><p>${consequence}</p>`, () =>
+				run(frm, "regenerate_key").then(show_key_result)
+			);
+		},
+		group
+	);
+}
+
+function show_key_result(result) {
+	if (!result) return;
+	if (!result.ok) {
+		frappe.msgprint({ title: __("Key not changed"), message: frappe.utils.escape_html(result.message), indicator: "red" });
+		return;
+	}
+	const fingerprint = `<p>${__("New fingerprint")}: <code>${frappe.utils.escape_html(result.own_fingerprint || result.fingerprint || "")}</code></p>`;
+	const message = result.message ? `<p>${frappe.utils.escape_html(result.message)}</p>` : `<p>${__("The server accepted the new key. This site stays connected.")}</p>`;
+	frappe.msgprint({ title: __("Key replaced"), message: message + fingerprint, indicator: "green" });
+}
 
 function setup_client(frm) {
 	const status = frm.doc.connection_status || "Not connected";
@@ -34,7 +77,7 @@ function setup_client(frm) {
 		});
 		frm.add_custom_button(__("Reset Connection"), () => {
 			frappe.confirm(
-				__("Forget the saved server key? This site must connect again and be approved again."),
+				__("Forget the saved server key? Click Connect to Server afterwards. The server's approval stays valid as long as this site's own key is unchanged."),
 				() => run(frm, "client_reset")
 			);
 		});

@@ -3,9 +3,9 @@
 import frappe
 from frappe import _
 from frappe.utils import now_datetime
-from frappe.utils.password import get_decrypted_password
+from frappe.utils.password import get_decrypted_password, remove_encrypted_password, set_encrypted_password
 
-from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS, audit, keys, transport
+from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS, audit, keys, signing, transport
 
 CLIENT_STATUS = {"Pending": "Waiting for approval", "Active": "Connected"}
 RESET_ROW = {
@@ -16,6 +16,7 @@ RESET_ROW = {
 	"approved_on": None,
 	"approved_by": None,
 	"last_seen": None,
+	"key_rotated_on": None,
 }
 
 
@@ -83,6 +84,153 @@ def client_reset():
 	)
 	audit.log("Client reset", "Accepted")
 	return {"ok": True}
+
+
+@frappe.whitelist(methods=["POST"])
+def client_rotate_key():
+	"""Replace this client's key while staying approved. Safe to click again after an interruption."""
+	settings = _client_settings()
+	if not settings.server_public_key:
+		frappe.throw(_("Connect to the server first."))
+
+	pending = _pending_key_pair()
+	if pending:
+		accepted = _server_accepts(settings, pending)
+		if accepted is None:
+			return _rotation_failed(
+				settings,
+				_(
+					"An earlier rotation was interrupted and the server cannot be reached to check it. "
+					"Try again when the server is reachable."
+				),
+			)
+		if accepted:
+			# The earlier rotation reached the server, but this site never recorded the switch.
+			return _finish_rotation(settings, pending)
+
+	new_private, new_public = keys.generate_keypair()
+	_store_pending(new_private, new_public)
+	nonce = signing.new_nonce()
+	proof = keys.sign(
+		new_private, signing.rotation_statement(settings.site_url, settings.public_key, new_public, nonce)
+	)
+	try:
+		reply = transport.post_signed(
+			settings, "rotate_key", {"new_public_key": new_public, "new_key_signature": proof}, nonce=nonce
+		)
+	except transport.NotAuthorised:
+		_clear_pending()
+		return _rotation_failed(
+			settings,
+			_("The server refused the new key. This site keeps its current key. See the server's Auth Log."),
+		)
+	except transport.TransportError as e:
+		# The server may or may not have switched, so the new key is kept for the next attempt.
+		return _rotation_failed(
+			settings,
+			_(
+				"The rotation could not be confirmed ({0}). Click Rotate Key again: it completes the rotation "
+				"if the server already switched, or starts a new one if not."
+			).format(e),
+		)
+	if reply.get("for_site") != settings.site_url or reply.get("fingerprint") != keys.fingerprint(new_public):
+		return _rotation_failed(settings, _("The server's reply did not confirm the new key."))
+	return _finish_rotation(settings, (new_private, new_public))
+
+
+@frappe.whitelist(methods=["POST"])
+def regenerate_key():
+	"""Replace this site's key pair outright, for when the private key may be known to someone else."""
+	frappe.only_for("System Manager")
+	settings = frappe.get_single(SETTINGS)
+	if not settings.mode:
+		frappe.throw(_("Choose and save this site's mode first."))
+	private_key, public_key = keys.generate_keypair()
+	fingerprint = _install_key(private_key, public_key)
+	if settings.mode == "Client":
+		message = _(
+			"This site has a new key, so the server no longer accepts it. Ask the server's admin to reset "
+			"this site's row, then click Connect to Server and have it approved again."
+		)
+		frappe.db.set_single_value(SETTINGS, {"connection_status": "Not connected", "last_error": message})
+	else:
+		message = _(
+			"This server has a new key. Every client must click Reset Connection, check the new "
+			"fingerprint, then click Connect to Server. Their approvals stay valid."
+		)
+	audit.log("Key regenerated", "Accepted", site_url=settings.site_url, fingerprint=fingerprint)
+	return {"ok": True, "mode": settings.mode, "fingerprint": fingerprint, "message": message}
+
+
+def _install_key(private_key, public_key) -> str:
+	"""Make a key pair this site's identity and drop any half-finished rotation."""
+	fingerprint = keys.fingerprint(public_key)
+	set_encrypted_password(SETTINGS, SETTINGS, private_key, "private_key")
+	frappe.db.set_single_value(
+		SETTINGS,
+		{
+			"public_key": public_key,
+			"key_fingerprint": fingerprint,
+			"key_created_on": now_datetime(),
+			"pending_public_key": None,
+		},
+	)
+	remove_encrypted_password(SETTINGS, SETTINGS, "pending_private_key")
+	return fingerprint
+
+
+def _pending_key_pair():
+	public_key = frappe.db.get_value(SETTINGS, SETTINGS, "pending_public_key")
+	private_key = get_decrypted_password(SETTINGS, SETTINGS, "pending_private_key", raise_exception=False)
+	return (private_key, public_key) if public_key and private_key else None
+
+
+def _store_pending(private_key, public_key):
+	set_encrypted_password(SETTINGS, SETTINGS, private_key, "pending_private_key")
+	frappe.db.set_single_value(SETTINGS, "pending_public_key", public_key)
+	# The server reads the new key from this site's identity endpoint while the rotation request is
+	# still open, so it must be committed before the request is sent.
+	_commit()
+
+
+def _clear_pending():
+	frappe.db.set_single_value(SETTINGS, "pending_public_key", None)
+	remove_encrypted_password(SETTINGS, SETTINGS, "pending_private_key")
+
+
+def _server_accepts(settings, key_pair):
+	"""True if the server accepts a request signed with key_pair, False if it refuses, None if unknown."""
+	try:
+		transport.post_signed(settings, "ping", {}, key_pair=key_pair)
+		return True
+	except transport.NotAuthorised:
+		return False
+	except transport.TransportError:
+		return None
+
+
+def _finish_rotation(settings, key_pair):
+	fingerprint = _install_key(*key_pair)
+	frappe.db.set_single_value(
+		SETTINGS, {"connection_status": "Connected", "last_connected_on": now_datetime(), "last_error": None}
+	)
+	audit.log("Key rotated", "Accepted", site_url=settings.server_url, fingerprint=fingerprint)
+	return {
+		"ok": True,
+		"status": "Connected",
+		"own_fingerprint": fingerprint,
+		"server_fingerprint": settings.server_fingerprint,
+	}
+
+
+def _rotation_failed(settings, message):
+	audit.log("Rotate key", "Rejected", site_url=settings.server_url, reason=message)
+	return {"ok": False, "message": message}
+
+
+def _commit():
+	if not frappe.flags.in_test:
+		frappe.db.commit()
 
 
 def _client_settings():

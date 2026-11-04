@@ -40,6 +40,18 @@ There are **no integration users, no API keys and no shared secrets**. The only 
 
 A captured request cannot be altered, replayed, or sent to another server or endpoint.
 
+### Replacing keys
+
+- **Rotate Key (client, while connected).** The client creates a new key pair and sends `rotate_key`, signed with its current key. The request carries the new public key and a statement signed by the new key. That statement binds the new key to the old key, the site and this request's nonce. The server switches to the new key only when all three hold:
+  - the request is signed with the current key;
+  - the new key signed the statement;
+  - the client's own URL publishes the new key as its `next_public_key`.
+
+  Someone who stole only the old private key cannot pass the last check. The site stays approved. If the reply is lost, clicking Rotate Key again checks whether the server already switched, finishes the rotation if it did, and otherwise starts a new one. It never discards a new key the server may already hold.
+- **Regenerate Key (either side).** Replaces the key pair outright, for when the private key may be known to someone else.
+  - On a client, the server must reset that site's row and approve it again.
+  - On the server, each client resets its connection and connects again after checking the new fingerprint. Client approvals stay valid.
+
 ### Protocol AI1: request headers
 
 | Header | Content |
@@ -70,6 +82,7 @@ POST
 | `accounts_intelligence.api.identity` | GET | None (public data only) | 30 / min |
 | `accounts_intelligence.api.connect` | POST | Signature and URL ownership check | 10 / min |
 | `accounts_intelligence.api.ping` | POST | Signature from an Active site | 60 / min |
+| `accounts_intelligence.api.rotate_key` | POST | Signature with the current key, proof from the new key, and the new key published at the site URL | 10 / min |
 
 The buttons on the settings form call `accounts_intelligence.auth.admin.*` and need the System Manager role.
 
@@ -111,7 +124,9 @@ Open **Accounts Intelligence Settings** on each site.
 | Situation | What to do |
 |---|---|
 | Remove a company | Server: **Revoke Selected**. It takes effect immediately. |
-| Replace a company's key | Server: **Reset Selected**. Client: **Reset Connection**, then **Connect**. Server: compare fingerprints and approve. |
+| Replace a company's key (routine) | Client: **Key → Rotate Key**. No new approval is needed. If it is interrupted, click it again. |
+| A company's key may be known to someone else | Client: **Key → Regenerate Key**. Server: **Reset Selected** on its row. Client: **Connect**. Server: compare fingerprints and approve. |
+| The server's key may be known to someone else | Server: **Key → Regenerate Key**. Each client: **Reset Connection**, check the new server fingerprint, then **Connect**. Approvals stay valid. |
 | Company site changes URL | Edit the row's URL (it resets to Pending), update the client's own URL, then connect and approve. |
 | Client says "the server's key has changed" | Treat it as a security event. Reset only after the server's admin confirms they replaced the key on purpose. |
 | Monitoring | Review **Rejected** entries in **Accounts Intelligence Auth Log** on the server. |
@@ -152,7 +167,8 @@ accounts_intelligence/
     accounts_intelligence_settings/       Single: mode, keys, connection
     accounts_intelligence_allowed_site/   child table: the URL whitelist
     accounts_intelligence_auth_log/       security event log
-  tests/test_auth.py      27 tests
+  tests/test_auth.py          authentication, 27 tests
+  tests/test_key_rotation.py  key rotation and regeneration, 11 tests
 ```
 
 ## Tests
@@ -161,20 +177,22 @@ accounts_intelligence/
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 27 tests build real HTTP requests and run them through the verification code. They cover:
+The 38 tests build real HTTP requests and run them through the verification code. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
 - unknown, disabled, Pending and Revoked sites;
 - the connect ownership check;
 - the uniform 401 and its log entry;
-- the settings guards.
+- the settings guards;
+- key rotation: a successful switch, the old key alone being refused without the site URL, the proof bound to the request, and resuming an interrupted rotation without losing the new key;
+- Regenerate Key on a client and on the server.
 
 They pass on v15 and v16.
 
 ## Known limitations
 
-- There is no in-place key rotation yet. Replacing a key means a reset on both sides, then a new connect and approval.
+- The server's key cannot be rotated in place. Replacing it means Regenerate Key on the server and a reconnect from each client.
 - The client trusts the server key it sees first. The fingerprint comparison at approval is the check for that.
 - Redis must be available. If it is down, requests are refused rather than allowed.
 - Site clocks must agree within 5 minutes.

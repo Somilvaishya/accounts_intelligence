@@ -44,15 +44,17 @@ def fetch_identity(base_url: str) -> dict:
 	return data
 
 
-def post_signed(settings, method: str, data: dict) -> dict:
+def post_signed(settings, method: str, data: dict, nonce=None, key_pair=None) -> dict:
 	"""Send a signed request to the server and return its verified reply.
 
 	`settings` carries server_url, server_public_key, site_url, public_key and the decrypted `private`.
+	`key_pair` (private, public) signs with a different key, used to check a key that is mid-rotation.
 	"""
+	private_key, public_key = key_pair or (settings.private, settings.public_key)
 	path = METHOD_PATH.format(method)
 	body = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
 	headers = signing.sign_request(
-		settings.private, settings.public_key, "POST", path, settings.server_url, settings.site_url, body
+		private_key, public_key, "POST", path, settings.server_url, settings.site_url, body, nonce=nonce
 	)
 	try:
 		response = requests.post(

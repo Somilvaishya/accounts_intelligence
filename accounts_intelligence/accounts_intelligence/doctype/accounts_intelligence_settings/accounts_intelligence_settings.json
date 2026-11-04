@@ -13,6 +13,8 @@
   "public_key",
   "key_created_on",
   "private_key",
+  "pending_public_key",
+  "pending_private_key",
   "client_section",
   "server_url",
   "connection_status",
@@ -81,6 +83,21 @@
    "length": 255
   },
   {
+   "description": "The key this client is switching to while a key rotation is in progress.",
+   "fieldname": "pending_public_key",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Pending Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pending_private_key",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Pending Private Key",
+   "length": 255
+  },
+  {
    "depends_on": "eval:doc.mode=='Client'",
    "fieldname": "client_section",
    "fieldtype": "Section Break",
@@ -146,7 +163,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-03 12:00:00.000000",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Settings",

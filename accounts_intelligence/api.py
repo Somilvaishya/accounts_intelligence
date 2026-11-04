@@ -9,18 +9,27 @@ from accounts_intelligence.auth import SETTINGS, keys, server, signing
 @frappe.whitelist(allow_guest=True, methods=["GET"])
 @rate_limit(limit=30, seconds=60)
 def identity():
-	"""This site's public identity. Only public information: the address, mode and public key."""
-	settings = frappe.db.get_value(SETTINGS, SETTINGS, ["mode", "site_url", "public_key"], as_dict=True)
+	"""This site's public identity. Only public information: the address, mode and public key.
+
+	During a key rotation a client also publishes the key it is about to switch to, which is how the
+	server confirms that the new key really belongs to this site.
+	"""
+	settings = frappe.db.get_value(
+		SETTINGS, SETTINGS, ["mode", "site_url", "public_key", "pending_public_key"], as_dict=True
+	)
 	if not settings or not settings.mode or not settings.site_url or not settings.public_key:
 		frappe.local.response["http_status_code"] = 404
 		return {"ok": False}
-	return {
+	result = {
 		"protocol": signing.PROTOCOL,
 		"site_url": settings.site_url,
 		"mode": settings.mode,
 		"public_key": settings.public_key,
 		"fingerprint": keys.fingerprint(settings.public_key),
 	}
+	if settings.mode == "Client" and settings.pending_public_key:
+		result["next_public_key"] = settings.pending_public_key
+	return result
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -33,3 +42,9 @@ def connect():
 @rate_limit(limit=60, seconds=60)
 def ping():
 	return server.handle("Ping", server.ping_handler)
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@rate_limit(limit=10, seconds=60)
+def rotate_key():
+	return server.handle("Rotate key", server.rotate_handler)
