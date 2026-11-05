@@ -252,3 +252,5 @@ override_whitelisted_methods = {"frappe.client.get_password": "accounts_intellig
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
+
+scheduler_events = {"cron": {"*/5 * * * *": ["accounts_intelligence.sync.client.scheduled_sync"]}}

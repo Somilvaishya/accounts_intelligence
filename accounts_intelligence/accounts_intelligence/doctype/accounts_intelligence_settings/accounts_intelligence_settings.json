@@ -23,6 +23,16 @@
   "server_fingerprint",
   "server_public_key",
   "last_error",
+  "sync_section",
+  "sync_enabled",
+  "last_sync_on",
+  "sync_column",
+  "last_sync_result",
+  "sync_state",
+  "sync_rules_section",
+  "sync_from",
+  "sync_rules_column",
+  "sync_every",
   "server_section",
   "allowed_sites"
  ],
@@ -148,6 +158,68 @@
    "read_only": 1
   },
   {
+   "depends_on": "eval:doc.mode=='Client'",
+   "description": "On the schedule the server sets, documents with other group companies (invoices, payments and journal entries, header only) and the balances with them are sent to the server. Group companies are matched by PAN or GSTIN.",
+   "fieldname": "sync_section",
+   "fieldtype": "Section Break",
+   "label": "Data Sync"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_enabled",
+   "fieldtype": "Check",
+   "label": "Send Data to Server"
+  },
+  {
+   "fieldname": "last_sync_on",
+   "fieldtype": "Datetime",
+   "label": "Last Sync On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sync_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_sync_result",
+   "fieldtype": "Small Text",
+   "label": "Last Sync Result",
+   "read_only": 1
+  },
+  {
+   "description": "Watermarks and the watch list. Managed by sync.",
+   "fieldname": "sync_state",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Sync State",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.mode=='Server'",
+   "description": "Every client site follows these rules. A change reaches the clients within an hour.",
+   "fieldname": "sync_rules_section",
+   "fieldtype": "Section Break",
+   "label": "Data Sync Rules"
+  },
+  {
+   "description": "Documents posted before this date are not sent. Leave empty to send the full history. Moving it earlier makes every client send its documents again; moving it later keeps what is already stored.",
+   "fieldname": "sync_from",
+   "fieldtype": "Date",
+   "label": "Sync Documents From"
+  },
+  {
+   "fieldname": "sync_rules_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "15 minutes",
+   "description": "How often each client sends what changed.",
+   "fieldname": "sync_every",
+   "fieldtype": "Select",
+   "label": "Sync Every",
+   "options": "5 minutes\n15 minutes\n30 minutes\n1 hour\n6 hours\n1 day"
+  },
+  {
    "depends_on": "eval:doc.mode=='Server'",
    "description": "Only sites on this list can connect. Add a site's exact URL, ask its admin to click Connect, compare fingerprints, then select the row and approve it.",
    "fieldname": "server_section",
@@ -163,7 +235,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-04 12:00:00.000000",
+ "modified": "2026-11-05 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Settings",

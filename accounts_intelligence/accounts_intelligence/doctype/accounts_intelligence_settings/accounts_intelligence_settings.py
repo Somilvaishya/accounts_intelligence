@@ -19,6 +19,9 @@ MANAGED_FIELDS = (
 	"connection_status",
 	"last_connected_on",
 	"last_error",
+	"last_sync_on",
+	"last_sync_result",
+	"sync_state",
 )
 MANAGED_ROW_FIELDS = (
 	"status",
@@ -29,6 +32,10 @@ MANAGED_ROW_FIELDS = (
 	"approved_by",
 	"last_seen",
 	"key_rotated_on",
+	"last_sync_on",
+	"last_sync_rows",
+	"resync_requested_on",
+	"last_check",
 )
 
 
@@ -120,12 +127,13 @@ class AccountsIntelligenceSettings(Document):
 			if self.server_url == self.site_url:
 				frappe.throw(_("The server URL cannot be this site's own URL."))
 		if before and before.server_url and before.server_url != self.server_url:
-			# A different server is a new connection: forget the old server's key.
+			# A different server is a new connection: forget the old server's key, and send everything again.
 			self.server_public_key = None
 			self.server_fingerprint = None
 			self.connection_status = "Not connected"
 			self.last_connected_on = None
 			self.last_error = None
+			self.sync_state = None
 
 	def _check_site_url_change(self, before):
 		# The site URL is signed into every request, so changing it while connected silently breaks the

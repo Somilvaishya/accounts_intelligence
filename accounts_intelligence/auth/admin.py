@@ -70,6 +70,20 @@ def client_test():
 
 
 @frappe.whitelist(methods=["POST"])
+def client_sync_now():
+	settings = _client_settings()
+	if not settings.sync_enabled or settings.connection_status != "Connected":
+		frappe.throw(_("Connect to the server and tick Send Data to Server first."))
+	frappe.enqueue(
+		"accounts_intelligence.sync.client.run",
+		queue="long",
+		job_id="accounts_intelligence_sync",
+		deduplicate=True,
+	)
+	return {"ok": True}
+
+
+@frappe.whitelist(methods=["POST"])
 def client_reset():
 	frappe.only_for("System Manager")
 	frappe.db.set_single_value(
@@ -315,6 +329,12 @@ def server_reset(rows):
 	return _server_update(rows, "Reset")
 
 
+@frappe.whitelist(methods=["POST"])
+def server_resync(rows):
+	"""Ask connected sites to send all their documents again. Nothing stored here is deleted."""
+	return _server_update(rows, "Resync")
+
+
 def _server_update(rows, action, fingerprints=None):
 	frappe.only_for("System Manager")
 	if frappe.db.get_single_value(SETTINGS, "mode") != "Server":
@@ -355,6 +375,12 @@ def _server_update(rows, action, fingerprints=None):
 			values = {"status": "Active", "approved_on": now_datetime(), "approved_by": frappe.session.user}
 		elif action == "Revoke":
 			values = {"status": "Revoked"}
+		elif action == "Resync":
+			if row.status != "Active":
+				frappe.throw(
+					_("{0} is {1}. Only a connected site can resync.").format(row.site_url, row.status)
+				)
+			values = {"resync_requested_on": now_datetime()}
 		else:
 			values = RESET_ROW
 		frappe.db.set_value(ALLOWED_SITE, row.name, values, update_modified=False)

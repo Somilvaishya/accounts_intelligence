@@ -4,6 +4,7 @@ import frappe
 from frappe.rate_limiter import rate_limit
 
 from accounts_intelligence.auth import SETTINGS, keys, server, signing
+from accounts_intelligence.sync import server as sync_server
 
 
 @frappe.whitelist(allow_guest=True, methods=["GET"])
@@ -50,3 +51,15 @@ def ping():
 @rate_limit(limit=10, seconds=60)
 def rotate_key():
 	return server.handle("Rotate key", server.rotate_handler, limit_per_minute=60)
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@rate_limit(limit=30, seconds=60)
+def sync_config():
+	return server.handle("Sync config", sync_server.config_handler, limit_per_minute=120)
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@rate_limit(limit=300, seconds=60)
+def sync():
+	return server.handle("Sync", sync_server.sync_handler, limit_per_minute=1200)

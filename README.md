@@ -11,12 +11,12 @@ Works on **Frappe / ERPNext v15 and v16**, and runs on Frappe Cloud with no infr
 | Part | Status |
 |---|---|
 | Site-to-site authentication and settings | **Built and tested** |
-| Sending accounting data from clients to the server | Planned |
+| Sending accounting data from clients to the server | **Built and tested** |
 | Related party and inter-company matching | Planned |
 | Findings dashboard for the finance head | Planned |
 | Chat over the group's data, limited to each user's permissions | Planned |
 
-The rest of this README describes what is built today: the trust layer every later part relies on.
+The rest of this README describes what is built today: the trust layer every later part relies on, and the data sync that runs over it.
 
 ## How authentication works
 
@@ -83,8 +83,40 @@ POST
 | `accounts_intelligence.api.connect` | POST | Signature and URL ownership check | 10 / min |
 | `accounts_intelligence.api.ping` | POST | Signature from an Active site | 60 / min |
 | `accounts_intelligence.api.rotate_key` | POST | Signature with the current key, proof from the new key, and the new key published at the site URL | 10 / min |
+| `accounts_intelligence.api.sync_config` | POST | Signature from an Active site | 30 / min |
+| `accounts_intelligence.api.sync` | POST | Signature from an Active site | 300 / min |
 
 The buttons on the settings form call `accounts_intelligence.auth.admin.*` and need the System Manager role.
+
+## How data sync works
+
+Each client sends the **headers** of its documents with **other group companies** to the server. Nothing else leaves the site: no line items, no attachments, no documents with outside customers or suppliers, and nothing is written to file storage on either side.
+
+**What is sent**
+
+| Data | Fields |
+|---|---|
+| Sales Invoice, Purchase Invoice, Payment Entry (submitted or cancelled) | company, document, posting date, party, PAN of the counterparty, grand total, net total, tax, currency, total in company currency, return and cancelled flags, supplier invoice no, payment type, reference no |
+| Journal Entry | one row per entry and group-company party, with the net amount in company currency |
+| Balance with each group company | sent only on the days it changes |
+
+**How group companies are found.** Each company is identified by its PAN, which every one of its GSTINs contains. On its first sync a client registers its companies with the server. The server answers with the **watch list**: the PAN of every group company. The client then sends only documents whose customer or supplier has one of those PANs, read from the party's `pan`, `gstin` (India Compliance) or `tax_id` field.
+
+**How it stays correct**
+- Each document type has a watermark (last `modified` and name). It moves only after the server's signed reply accepts the batch. A failed run sends the same rows again, and the server's upsert makes that harmless.
+- Rows are keyed on company, document type, document and party, so a resent row lands on the same record. An older copy of a document never overwrites a newer one.
+- A client can only write rows for the companies registered to its own site. The site comes from the request signature, not from the body.
+- **Daily check:** once a day the client sends its count and total per document type and month. The server compares them with what it stored and records the result in the site row's **Last Daily Check**. If the server is missing documents, the client sends that month again. If the server holds more (documents deleted on the client), the difference is only reported.
+
+**Rules set on the server** (Settings → Data Sync Rules):
+
+| Setting | Effect |
+|---|---|
+| Sync Documents From | Documents posted earlier are not sent. Empty means full history. Moving it earlier makes clients send the older documents; moving it later keeps what is stored. Balances are always full balances. |
+| Sync Every | 5 minutes to 1 day. Clients check every 5 minutes and send only when this interval has passed. |
+| Sync Documents From on a site row | Overrides the group date for that site, for example a company that joined the group later. |
+
+**Where it is stored on the server:** **Accounts Intelligence Entity** (one row per group company, named by PAN), **Accounts Intelligence Transaction** (one row per document, or per party for a journal entry) and **Accounts Intelligence Balance**. On the client, only the Data Sync section of the settings changes: Last Sync On, Last Sync Result and a hidden state field.
 
 ## Installation
 
@@ -119,6 +151,12 @@ Open **Accounts Intelligence Settings** on each site.
 3. Select the row and click **Approve Selected**.
 4. On the company site, click **Test Connection**. The status should read **Connected**.
 
+### Start data sync
+
+1. On the server, set **Sync Documents From** and **Sync Every** under **Data Sync Rules**, then save.
+2. On each company site, make sure every company has a PAN or GSTIN, and that customers and suppliers which are group companies have one too.
+3. Tick **Send Data to Server** and save. The scheduler sends the first batch within 5 minutes, or click **Sync Now**. **Last Sync Result** shows what was sent.
+
 ### Day-to-day
 
 | Situation | What to do |
@@ -129,7 +167,8 @@ Open **Accounts Intelligence Settings** on each site.
 | The server's key may be known to someone else | Server: **Key → Regenerate Key**. Each client: **Reset Connection**, check the new server fingerprint, then **Connect**. Approvals stay valid. |
 | Company site changes URL | Edit the row's URL (it resets to Pending), update the client's own URL, then connect and approve. |
 | Client says "the server's key has changed" | Treat it as a security event. Reset only after the server's admin confirms they replaced the key on purpose. |
-| Monitoring | Review **Rejected** entries in **Accounts Intelligence Auth Log** on the server. |
+| Monitoring | Review **Rejected** entries in **Accounts Intelligence Auth Log** on the server. The server's settings page lists sites that have not synced for more than twice the interval. |
+| Server data looks incomplete for a company | Check the row's **Last Daily Check**. To send everything again, select the row and click **Resync Selected**; nothing stored is deleted. |
 | Backups | Keep a copy of each site's `encryption_key`. The private key cannot be decrypted after a restore without it. |
 
 ## Testing two sites on one local bench
@@ -154,7 +193,11 @@ Use two different host names so the browser keeps the two logins apart, and turn
 
 ```
 accounts_intelligence/
-  api.py                  public endpoints: identity, connect, ping
+  api.py                  public endpoints: identity, connect, ping, rotate_key, sync_config, sync
+  overrides.py            blocks reading the private keys through frappe.client.get_password
+  sync/
+    client.py             collector, watermarks, daily check, scheduled job
+    server.py             watch list, validation, bulk upsert, daily comparison
   auth/
     urls.py               canonical site URLs and the HTTPS rule
     keys.py               Ed25519 keys, signing, key id, fingerprint
@@ -167,8 +210,13 @@ accounts_intelligence/
     accounts_intelligence_settings/       Single: mode, keys, connection
     accounts_intelligence_allowed_site/   child table: the URL whitelist
     accounts_intelligence_auth_log/       security event log
-  tests/test_auth.py          authentication, 27 tests
-  tests/test_key_rotation.py  key rotation and regeneration, 11 tests
+    accounts_intelligence_entity/         server: one row per group company (PAN)
+    accounts_intelligence_transaction/    server: synced document headers
+    accounts_intelligence_balance/        server: balances with group companies
+  tests/test_auth.py          authentication
+  tests/test_key_rotation.py  key rotation and regeneration
+  tests/test_hardening.py     security audit fixes
+  tests/test_sync.py          data sync
 ```
 
 ## Tests
@@ -177,7 +225,7 @@ accounts_intelligence/
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 38 tests build real HTTP requests and run them through the verification code. They cover:
+The 85 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
@@ -186,7 +234,8 @@ The 38 tests build real HTTP requests and run them through the verification code
 - the uniform 401 and its log entry;
 - the settings guards;
 - key rotation: a successful switch, the old key alone being refused without the site URL, the proof bound to the request, and resuming an interrupted rotation without losing the new key;
-- Regenerate Key on a client and on the server.
+- Regenerate Key on a client and on the server;
+- data sync: only group-company documents are sent, resent batches are stored once, older copies never overwrite newer ones, a failed send keeps the watermark, the start date and interval, the daily check and resync.
 
 They pass on v15 and v16.
 
@@ -196,6 +245,8 @@ They pass on v15 and v16.
 - The client trusts the server key it sees first. The fingerprint comparison at approval is the check for that.
 - Redis must be available. If it is down, requests are refused rather than allowed.
 - Site clocks must agree within 5 minutes.
+- A party without a PAN or GSTIN is never recognised as a group company, so its documents are not sent.
+- A document cancelled and deleted between two syncs is not removed on the server; the daily check reports it.
 
 ## Contributing
 
