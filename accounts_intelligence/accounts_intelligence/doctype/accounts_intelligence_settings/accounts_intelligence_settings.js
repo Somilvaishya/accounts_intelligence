@@ -9,6 +9,8 @@ const STATUS_COLOUR = {
 
 frappe.ui.form.on("Accounts Intelligence Settings", {
 	refresh(frm) {
+		// Plain HTTP only works in developer mode. Elsewhere the switch is shown only while it is on, so it can be turned off.
+		frm.toggle_display("allow_http_for_testing", Boolean(frappe.boot.developer_mode || frm.doc.allow_http_for_testing));
 		frm.set_intro("");
 		if (!frm.doc.mode) {
 			frm.set_intro(__("Choose this site's mode and save. A key pair for this site is created on the first save."), "blue");
@@ -16,8 +18,51 @@ frappe.ui.form.on("Accounts Intelligence Settings", {
 		}
 		if (frm.doc.mode === "Client") setup_client(frm);
 		if (frm.doc.mode === "Server") setup_server(frm);
+		setup_key_buttons(frm);
 	},
 });
+
+function setup_key_buttons(frm) {
+	const group = __("Key");
+	if (frm.doc.mode === "Client" && frm.doc.server_public_key && frm.doc.connection_status === "Connected") {
+		frm.add_custom_button(
+			__("Rotate Key"),
+			() => {
+				frappe.confirm(
+					__(
+						"Create a new key for this site and switch to it? The server checks the new key at this site's address and keeps the approval. If it is interrupted, click Rotate Key again."
+					),
+					() => run(frm, "client_rotate_key").then(show_key_result)
+				);
+			},
+			group
+		);
+	}
+	frm.add_custom_button(
+		__("Regenerate Key"),
+		() => {
+			const consequence =
+				frm.doc.mode === "Client"
+					? __("The server stops accepting this site until its admin resets this site's row and approves it again. Use Rotate Key instead unless the current key may be known to someone else.")
+					: __("Every client must click Reset Connection, check the new fingerprint and connect again. Their approvals stay valid.");
+			frappe.confirm(`<p>${__("Replace this site's key pair now?")}</p><p>${consequence}</p>`, () =>
+				run(frm, "regenerate_key").then(show_key_result)
+			);
+		},
+		group
+	);
+}
+
+function show_key_result(result) {
+	if (!result) return;
+	if (!result.ok) {
+		frappe.msgprint({ title: __("Key not changed"), message: frappe.utils.escape_html(result.message), indicator: "red" });
+		return;
+	}
+	const fingerprint = `<p>${__("New fingerprint")}: <code>${frappe.utils.escape_html(result.own_fingerprint || result.fingerprint || "")}</code></p>`;
+	const message = result.message ? `<p>${frappe.utils.escape_html(result.message)}</p>` : `<p>${__("The server accepted the new key. This site stays connected.")}</p>`;
+	frappe.msgprint({ title: __("Key replaced"), message: message + fingerprint, indicator: "green" });
+}
 
 function setup_client(frm) {
 	const status = frm.doc.connection_status || "Not connected";
@@ -32,9 +77,16 @@ function setup_client(frm) {
 		frm.add_custom_button(__("Test Connection"), () => {
 			run(frm, "client_test").then(show_client_result);
 		});
+		if (frm.doc.sync_enabled && frm.doc.connection_status === "Connected") {
+			frm.add_custom_button(__("Sync Now"), () => {
+				run(frm, "client_sync_now").then((result) => {
+					if (result && result.ok) frappe.show_alert({ message: __("Sync started. Reload in a minute to see the result."), indicator: "blue" });
+				});
+			});
+		}
 		frm.add_custom_button(__("Reset Connection"), () => {
 			frappe.confirm(
-				__("Forget the saved server key? This site must connect again and be approved again."),
+				__("Forget the saved server key? Click Connect to Server afterwards. The server's approval stays valid as long as this site's own key is unchanged."),
 				() => run(frm, "client_reset")
 			);
 		});
@@ -62,19 +114,31 @@ function setup_server(frm) {
 	const rows = frm.doc.allowed_sites || [];
 	const waiting = rows.filter((r) => r.status === "Pending" && r.public_key).length;
 	const active = rows.filter((r) => r.status === "Active").length;
-	frm.set_intro(
-		__("{0} connected, {1} waiting for approval. This site's fingerprint: {2}", [
-			active,
-			waiting,
-			`<code>${frappe.utils.escape_html(frm.doc.key_fingerprint || "")}</code>`,
-		]),
-		waiting ? "orange" : "blue"
-	);
+	let intro = __("{0} connected, {1} waiting for approval. This site's fingerprint: {2}", [
+		active,
+		waiting,
+		`<code>${frappe.utils.escape_html(frm.doc.key_fingerprint || "")}</code>`,
+	]);
+	const late = late_sites(frm, rows);
+	if (late.length) {
+		intro += `<br>${__("No sync for more than twice the interval: {0}", [late.map((r) => frappe.utils.escape_html(r.site_url)).join(", ")])}`;
+	}
+	frm.set_intro(intro, waiting || late.length ? "orange" : "blue");
 
 	const grid = frm.fields_dict.allowed_sites.grid;
 	grid.add_custom_button(__("Approve Selected"), () => act(frm, "server_approve", __("Approve")));
 	grid.add_custom_button(__("Revoke Selected"), () => act(frm, "server_revoke", __("Revoke")));
 	grid.add_custom_button(__("Reset Selected"), () => act(frm, "server_reset", __("Reset")));
+	grid.add_custom_button(__("Resync Selected"), () => act(frm, "server_resync", __("Resync")));
+}
+
+const SYNC_MINUTES = { "5 minutes": 5, "15 minutes": 15, "30 minutes": 30, "1 hour": 60, "6 hours": 360, "1 day": 1440 };
+
+function late_sites(frm, rows) {
+	// Only sites that have synced at least once: a site that never turned sync on is not late.
+	const limit = 2 * (SYNC_MINUTES[frm.doc.sync_every] || 15);
+	const now = frappe.datetime.system_datetime();
+	return rows.filter((r) => r.status === "Active" && r.last_sync_on && frappe.datetime.get_minute_diff(now, r.last_sync_on) > limit);
 }
 
 function act(frm, method, label) {
@@ -90,9 +154,15 @@ function act(frm, method, label) {
 		server_approve: __("Approve only if each fingerprint matches the one shown on that site's settings page."),
 		server_revoke: __("Revoked sites are refused at once. To let one back in, reset it and approve it again."),
 		server_reset: __("The site's key is forgotten. It must connect and be approved again."),
+		server_resync: __("Within an hour, each site sends all its documents again. Nothing stored here is deleted."),
 	};
+	const args = { rows: rows.map((r) => r.name) };
+	if (method === "server_approve") {
+		// Send the fingerprints shown above, so the server refuses a key that changed since then.
+		args.fingerprints = Object.fromEntries(rows.map((r) => [r.name, r.fingerprint || ""]));
+	}
 	frappe.confirm(`<p>${label}:</p><ul>${lines}</ul><p>${notes[method]}</p>`, () => {
-		run(frm, method, { rows: rows.map((r) => r.name) });
+		run(frm, method, args);
 	});
 }
 

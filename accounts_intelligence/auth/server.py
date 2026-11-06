@@ -5,6 +5,7 @@ on the allowed list. Every rejection gets the same 401 reply; the reason goes to
 """
 
 import json
+import time
 from dataclasses import dataclass
 
 import frappe
@@ -17,6 +18,8 @@ from accounts_intelligence.auth.urls import InvalidURL, canonical_url
 MAX_BODY = 1024 * 1024
 LAST_SEEN_EVERY = 60
 ROW_FIELDS = ["name", "site_url", "enabled", "status", "public_key", "last_seen"]
+SETTINGS_FIELDS = ["mode", "site_url", "allow_http_for_testing"]
+HANDLER_SAVEPOINT = "accounts_intelligence_handler"
 
 
 class Rejected(Exception):
@@ -33,18 +36,32 @@ class SignedRequest:
 	nonce: str
 
 
-def handle(event: str, handler, connect=False):
-	"""Verify the current request, run the handler, and sign its result for the caller."""
+def handle(event: str, handler, connect=False, limit_per_minute=600):
+	"""Verify the current request, run the handler, and sign its result for the caller.
+
+	`limit_per_minute` caps the endpoint for all callers together. Frappe's per-IP limit relies on
+	X-Forwarded-For, which a caller can set, so this cap is what bounds a flood.
+	"""
 	claimed_site = (frappe.get_request_header(signing.HEADER_SITE) or "")[:140]
+	if over_limit(event, limit_per_minute):
+		audit.log_rejection(event, claimed_site, "endpoint limit reached")
+		return throttled()
 	try:
+		frappe.db.savepoint(HANDLER_SAVEPOINT)
 		request = verify_request(connect=connect)
 		private_key = get_decrypted_password(SETTINGS, SETTINGS, "private_key", raise_exception=False)
 		if not private_key:
 			raise Rejected("this server has no private key")
 		result = handler(request)
 	except Rejected as e:
-		audit.log(event, "Rejected", site_url=claimed_site, reason=e.reason)
+		audit.log_rejection(event, claimed_site, e.reason)
 		return deny()
+	except Exception:
+		# Undo the handler's partial writes, keep the details on this site and tell the caller nothing.
+		frappe.db.rollback(save_point=HANDLER_SAVEPOINT)
+		frappe.log_error(title=f"Accounts Intelligence: {event} failed")
+		audit.log(event, "Error", site_url=claimed_site, reason="unexpected error, see Error Log")
+		return server_error()
 	audit.log(
 		event, "Accepted", site_url=request.row.site_url, fingerprint=keys.fingerprint(request.public_key)
 	)
@@ -56,8 +73,27 @@ def deny():
 	return {"ok": False, "error": "not_authorised"}
 
 
+def server_error():
+	frappe.local.response["http_status_code"] = 500
+	return {"ok": False, "error": "server_error"}
+
+
+def throttled():
+	frappe.local.response["http_status_code"] = 429
+	return {"ok": False, "error": "rate_limited"}
+
+
+def over_limit(event: str, limit_per_minute: int) -> bool:
+	"""Count a request against a one-minute window shared by every caller of this endpoint."""
+	window = int(time.time() // 60)
+	key = frappe.cache.make_key(f"accounts_intelligence:limit:{event}:{window}")
+	frappe.cache.set(key, 0, ex=120, nx=True)
+	return frappe.cache.incr(key) > limit_per_minute
+
+
 def verify_request(connect=False) -> SignedRequest:
-	settings = frappe.get_single(SETTINGS)
+	# Only three values are needed, so the allowed list is not loaded on every request.
+	settings = frappe.db.get_value(SETTINGS, SETTINGS, SETTINGS_FIELDS, as_dict=True) or frappe._dict()
 	if settings.mode != "Server" or not settings.site_url:
 		raise Rejected("this site is not set up as a server")
 	request = frappe.request
@@ -180,3 +216,41 @@ def connect_handler(request: SignedRequest) -> dict:
 		update_modified=False,
 	)
 	return {"ok": True, "status": "Pending"}
+
+
+def rotate_handler(request: SignedRequest) -> dict:
+	"""Replace an Active site's key without a new approval.
+
+	Three proofs are required: the request is signed with the current key (verify_request), the new
+	key signs a statement bound to this request, and the site's own URL publishes the new key as its
+	next key. A thief holding only the old private key fails the last check, because they cannot
+	publish a key at the site's address.
+	"""
+	row = request.row
+	new_key = request.data.get("new_public_key")
+	if not keys.is_valid_public_key(new_key):
+		raise Rejected("rotation carries no valid new key")
+	if new_key == request.public_key:
+		raise Rejected("the new key is the same as the current key")
+	statement = signing.rotation_statement(row.site_url, request.public_key, new_key, request.nonce)
+	if not keys.verify(new_key, statement, request.data.get("new_key_signature")):
+		raise Rejected("the new key did not sign the rotation")
+	try:
+		identity = transport.fetch_identity(row.site_url)
+	except transport.TransportError as e:
+		raise Rejected(f"could not confirm the new key at the site address: {e}")
+	if (
+		identity.get("mode") != "Client"
+		or identity.get("site_url") != row.site_url
+		or identity.get("public_key") != request.public_key
+		or identity.get("next_public_key") != new_key
+	):
+		raise Rejected("the site address does not publish this new key")
+	frappe.db.set_value(
+		ALLOWED_SITE,
+		row.name,
+		{"public_key": new_key, "fingerprint": keys.fingerprint(new_key), "key_rotated_on": now_datetime()},
+		update_modified=False,
+	)
+	audit.log("Key rotated", "Accepted", site_url=row.site_url, fingerprint=keys.fingerprint(new_key))
+	return {"ok": True, "status": "Active", "fingerprint": keys.fingerprint(new_key)}
