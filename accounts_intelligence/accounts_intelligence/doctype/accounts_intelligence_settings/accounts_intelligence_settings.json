@@ -196,7 +196,7 @@
   },
   {
    "depends_on": "eval:doc.mode=='Server'",
-   "description": "Every client site follows these rules. A change reaches the clients within an hour.",
+   "description": "Every client site follows these rules. A change reaches each client on its next sync.",
    "fieldname": "sync_rules_section",
    "fieldtype": "Section Break",
    "label": "Data Sync Rules"
@@ -235,7 +235,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-05 12:00:00.000000",
+ "modified": "2026-11-06 18:30:00.000000",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Settings",

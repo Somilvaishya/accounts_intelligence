@@ -38,6 +38,7 @@ COMPANY = "AI Sync Test Co"
 GROUP_CUSTOMER = "AI Sync Group Customer"
 GROUP_SUPPLIER = "AI Sync Group Supplier"
 OUTSIDER = "AI Sync Outsider"
+OWN_BRANCH = "AI Sync Own Branch"
 POST_SIGNED = "accounts_intelligence.auth.transport.post_signed"
 
 
@@ -144,14 +145,16 @@ class TestSyncServer(FrappeTestCase):
 				_transaction(source_name="SINV-3", counterparty=THIRD_PAN),
 				_transaction(source_name="SINV-4", posting_date="01/10/2026"),
 				_transaction(source_name="SINV-5", source_doctype="Sales Order"),
+				_transaction(source_name="SINV-6", counterparty=OWN_PAN),
 				"not a row",
 			]
 		)
 		self.assertEqual(reply["transactions"], 1)
-		self.assertEqual(reply["skipped_count"], 5)
+		self.assertEqual(reply["skipped_count"], 6)
 		reasons = " ".join(s["reason"] for s in reply["skipped"])
 		self.assertIn("not registered to this site", reasons)
 		self.assertIn("not a group company", reasons)
+		self.assertIn("its own counterparty", reasons)
 
 	def test_oversized_batch_is_rejected(self):
 		with self.assertRaises(server.Rejected):
@@ -197,6 +200,8 @@ class TestSyncServer(FrappeTestCase):
 		self.assertEqual([r.balance for r in rows], [250, 100])
 		self.assertEqual(_row().last_sync_rows, 1)
 		self.assertIsNotNone(_row().last_sync_on)
+		self._sync(check={})
+		self.assertEqual(_row().last_sync_rows, 1, "a call without rows keeps the last batch size")
 
 
 class TestSyncEndpoint(FrappeTestCase):
@@ -254,12 +259,15 @@ class TestSyncClient(FrappeTestCase):
 			("Customer", GROUP_CUSTOMER, {"customer_name": GROUP_CUSTOMER, "gstin": f"27{OTHER_PAN}1Z5"}),
 			("Customer", OUTSIDER, {"customer_name": OUTSIDER, "pan": "AAACZ9999Z"}),
 			("Supplier", GROUP_SUPPLIER, {"supplier_name": GROUP_SUPPLIER, "tax_id": OTHER_PAN}),
+			# The company itself under another GSTIN, as GGIL and GGSPL keep it: never a group company.
+			("Customer", OWN_BRANCH, {"customer_name": COMPANY, "gstin": f"06{OWN_PAN}1Z5"}),
 		):
 			frappe.db.delete(party_type, {"name": name})
 			_insert(party_type, name=name, **values)
 
 		self._document("Sales Invoice", "AI-SINV-1", customer=GROUP_CUSTOMER, grand_total=118, net_total=100)
 		self._document("Sales Invoice", "AI-SINV-2", customer=OUTSIDER, grand_total=50)
+		self._document("Sales Invoice", "AI-SINV-OWN", customer=OWN_BRANCH, grand_total=999)
 		self._document("Sales Invoice", "AI-SINV-3", customer=GROUP_CUSTOMER, docstatus=0)
 		self._document(
 			"Purchase Invoice", "AI-PINV-1", supplier=GROUP_SUPPLIER, bill_no="B-1", grand_total=70
@@ -360,6 +368,50 @@ class TestSyncClient(FrappeTestCase):
 		self.assertEqual(parties[("Supplier", GROUP_SUPPLIER)][0], OTHER_PAN)
 		self.assertNotIn(("Customer", OUTSIDER), parties)
 
+	def test_a_party_is_found_by_the_gstin_on_its_address(self):
+		frappe.db.delete("Customer", {"name": "AI Sync Address Only"})
+		_insert("Customer", name="AI Sync Address Only", customer_name="AI Sync Address Only")
+		address = _insert(
+			"Address",
+			name=frappe.generate_hash(length=10),
+			address_line1="x",
+			city="x",
+			gstin=f"09{OTHER_PAN}1Z5",
+		)
+		_insert(
+			"Dynamic Link",
+			name=frappe.generate_hash(length=10),
+			parent=address.name,
+			parenttype="Address",
+			parentfield="links",
+			link_doctype="Customer",
+			link_name="AI Sync Address Only",
+		)
+		self.assertEqual(self._parties()[("Customer", "AI Sync Address Only")][0], OTHER_PAN)
+
+	def test_the_site_company_is_the_default_company(self):
+		with patch("frappe.defaults.get_global_default", return_value=COMPANY):
+			self.assertEqual(sync_client.own_companies(), ({COMPANY: OWN_PAN}, []))
+		# With no default and several companies, nothing is sent and the admin is told why.
+		with patch("frappe.defaults.get_global_default", return_value=None):
+			companies, notes = sync_client.own_companies()
+		self.assertEqual(companies, {})
+		self.assertIn("Default Company", notes[0])
+
+	def test_party_named_like_a_group_company_without_its_pan_is_reported(self):
+		frappe.db.delete("Customer", {"name": "AI Sync Beta"})
+		_insert("Customer", name="AI Sync Beta", customer_name="M/S Beta Spices Pvt. Ltd.")
+		notes = sync_client.unmatched_names(
+			{OTHER_PAN: "Beta Spices Private Limited"}, {OTHER_PAN}, self._parties()
+		)
+		self.assertEqual(len(notes), 1)
+		self.assertIn(
+			"Customer AI Sync Beta is named like group company Beta Spices Private Limited", notes[0]
+		)
+		self.assertEqual(
+			sync_client.unmatched_names({OTHER_PAN: "Beta Spices Private Limited"}, set(), {}), []
+		)
+
 	def test_collect_sends_only_submitted_documents_with_group_companies(self):
 		companies, parties = {COMPANY: OWN_PAN}, self._parties()
 		rows, watermark, more = sync_client.collect("Sales Invoice", companies, parties)
@@ -423,9 +475,6 @@ class TestSyncClient(FrappeTestCase):
 				"site_url": "https://third.example.com",
 			}
 		).insert(ignore_permissions=True)
-		state = self._state()
-		state["config_at"] = 0
-		frappe.db.set_single_value(SETTINGS, "sync_state", json.dumps(state))
 		self.assertEqual(self._run_against_server(), "Sent 4 documents and 1 balances.")
 		self.assertEqual(frappe.db.count(TRANSACTION), 4)
 
@@ -444,22 +493,15 @@ class TestSyncClient(FrappeTestCase):
 			len(sync_client.collect("Sales Invoice", companies, parties, sync_from="2026-10-01")[0]), 1
 		)
 
-	def _force_config(self):
-		state = self._state()
-		state["config_at"] = 0
-		frappe.db.set_single_value(SETTINGS, "sync_state", json.dumps(state))
-
 	def test_start_date_comes_from_the_server_and_moving_it_earlier_resends(self):
 		frappe.db.set_single_value(SETTINGS, {"sync_from": "2026-10-02", "sync_every": "1 hour"})
 		self.assertEqual(self._run_against_server(), "Sent 0 documents and 1 balances.")
 		self.assertEqual((self._state()["sync_from"], self._state()["sync_every"]), ("2026-10-02", 60))
 
 		frappe.db.set_single_value(SETTINGS, "sync_from", "2026-10-03")
-		self._force_config()
 		self.assertEqual(self._run_against_server(), "Up to date.")
 
 		frappe.db.set_single_value(SETTINGS, "sync_from", None)
-		self._force_config()
 		self.assertEqual(self._run_against_server(), "Sent 4 documents and 1 balances.")
 
 	def test_schedule_waits_for_the_interval(self):
@@ -494,9 +536,7 @@ class TestSyncClient(FrappeTestCase):
 
 	def test_resync_request_sends_everything_again(self):
 		self._run_against_server()
-		self._force_config()
 		rules = {"sync_from": None, "sync_every": 15, "resync": "2026-11-05 10:00:00"}
 		with patch.object(sync_server, "site_rules", return_value=rules):
 			self.assertEqual(self._run_against_server(), "Sent 4 documents and 1 balances.")
-			self._force_config()
 			self.assertEqual(self._run_against_server(), "Up to date.", "the same request is not repeated")

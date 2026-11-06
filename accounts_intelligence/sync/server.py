@@ -69,11 +69,15 @@ def config_handler(request) -> dict:
 		audit.log("Sync config", "Rejected", site_url=site, reason=f"companies refused: {reasons}")
 	watch = sorted(known)
 	rules = site_rules(request.row.name)
+	# Every client run starts here, even when it has nothing to send, so this is when the site last synced.
+	frappe.db.set_value(ALLOWED_SITE, request.row.name, "last_sync_on", now_datetime(), update_modified=False)
 	return {
 		"ok": True,
 		"entities": accepted,
 		"refused": refused,
 		"watch": watch,
+		# Names only let a client warn about a party named like a group company without a matching PAN.
+		"names": {pan: known[pan].company_name for pan in watch},
 		"version": hashlib.sha256(",".join(watch).encode()).hexdigest()[:16],
 		**rules,
 	}
@@ -108,7 +112,10 @@ def sync_handler(request) -> dict:
 	_upsert(TRANSACTION, transaction_rows, version="source_modified")
 	_upsert(BALANCE, balance_rows)
 
-	values = {"last_sync_on": now_datetime(), "last_sync_rows": len(transaction_rows) + len(balance_rows)}
+	values = {"last_sync_on": now_datetime()}
+	if transaction_rows or balance_rows:
+		# The daily check arrives without rows; it must not hide the size of the last real batch.
+		values["last_sync_rows"] = len(transaction_rows) + len(balance_rows)
 	reply = {
 		"ok": True,
 		"transactions": len(transaction_rows),
@@ -185,6 +192,8 @@ def _clean(rows, cleaner, own, group, skipped) -> list:
 				raise ValueError("company is not registered to this site")
 			if values["counterparty"] not in group:
 				raise ValueError("counterparty is not a group company")
+			if values["counterparty"] == values["entity"]:
+				raise ValueError("a company cannot be its own counterparty")
 		except (KeyError, TypeError, ValueError) as e:
 			skipped.append({"row": _label(row), "reason": str(e)[:140]})
 			continue
