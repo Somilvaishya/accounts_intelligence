@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useOutletContext, useSearchParams } from "react-router-dom";
 import { getDashboard, useLoad, type Dashboard, type Period } from "./api";
 import Chat from "./components/Chat";
@@ -16,6 +16,12 @@ export interface Shell {
 export const useShell = () => useOutletContext<Shell>();
 
 const USER = document.getElementById("root")?.dataset.user || "";
+const ASK = "ai-ask";
+
+/** Open the assistant and ask it `question`, from anywhere on the page. */
+export function askAssistant(question: string) {
+  window.dispatchEvent(new CustomEvent(ASK, { detail: question }));
+}
 
 export default function Layout() {
   const [period, setPeriod, query] = usePeriod();
@@ -24,6 +30,18 @@ export default function Layout() {
   const [chatColumn, setChatColumn] = useState(true);
   const [chatDrawer, setChatDrawer] = useState(false);
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  const [pending, setPending] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      setPending((e as CustomEvent<string>).detail);
+      if (matchMedia("(min-width: 1280px)").matches) setChatColumn(true);
+      else setChatDrawer(true);
+    };
+    window.addEventListener(ASK, onAsk);
+    return () => window.removeEventListener(ASK, onAsk);
+  }, []);
+  const chatProps = { pending, onPendingSent: () => setPending(null) };
 
   const toggleTheme = () => {
     const next = !dark;
@@ -75,7 +93,7 @@ export default function Layout() {
         </main>
         {chatColumn && (
           <div className="sticky top-20 hidden h-[calc(100vh-6.5rem)] xl:block">
-            <Chat onClose={() => setChatColumn(false)} />
+            <Chat onClose={() => setChatColumn(false)} {...chatProps} />
           </div>
         )}
       </div>
@@ -84,7 +102,7 @@ export default function Layout() {
         <div className="fixed inset-0 z-50 xl:hidden">
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]" onClick={() => setChatDrawer(false)} />
           <div className="absolute inset-y-0 right-0 w-full max-w-sm p-3">
-            <Chat onClose={() => setChatDrawer(false)} />
+            <Chat onClose={() => setChatDrawer(false)} {...chatProps} />
           </div>
         </div>
       )}
@@ -98,6 +116,7 @@ function Sidebar({ dashboard, query, open, onClose }: { dashboard?: Dashboard; q
       isActive ? "bg-accent text-white" : "text-ink-2 hover:bg-sunken hover:text-ink"
     }`;
   const sync = dashboard?.sync;
+  const toReview = dashboard?.pairs.reduce((n, p) => n + p.summary.open - p.summary.explained, 0) ?? 0;
   const syncTone = !sync?.sites ? "bg-slate-400" : sync.late.length ? "bg-amber-500" : "bg-emerald-500";
 
   return (
@@ -118,6 +137,10 @@ function Sidebar({ dashboard, query, open, onClose }: { dashboard?: Dashboard; q
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
           <NavLink to={`/${query}`} end className={item} onClick={onClose}>
             <Icon name="grid" /> Dashboard
+          </NavLink>
+          <NavLink to={`/open-items${query}`} className={item} onClick={onClose}>
+            <Icon name="alert" /> <span className="flex-1">Open items</span>
+            {!!toReview && <span className="rounded-full bg-black/5 px-1.5 text-[11px] font-semibold tabular-nums dark:bg-white/10">{toReview}</span>}
           </NavLink>
           <NavLink to={`/related-parties${query}`} className={item} onClick={onClose}>
             <Icon name="users" /> Related parties

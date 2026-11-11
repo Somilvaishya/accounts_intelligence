@@ -76,6 +76,7 @@ function Kpis({ pairs }: { pairs: PairRow[] }) {
   const matched = pairs.reduce((sum, p) => sum + p.summary.invoice.matched + p.summary.money.matched, 0);
   const total = matched + openInvoices + openMoney;
   const rate = total ? Math.round((matched / total) * 1000) / 10 : 100;
+  const explained = pairs.reduce((sum, p) => sum + p.summary.explained, 0);
   const unexplained = pairs.some((p) => p.summary.unexplained == null)
     ? null
     : pairs.reduce((sum, p) => sum + Math.abs(p.summary.unexplained ?? 0), 0);
@@ -86,7 +87,7 @@ function Kpis({ pairs }: { pairs: PairRow[] }) {
         caption={`across ${withGap} of ${pairs.length} company ${pairs.length === 1 ? "pair" : "pairs"}`}
         footer={["Largest", worst ? `${acronym(worst.a.name)} ↔ ${acronym(worst.b.name)}` : "—"]} />
       <Kpi label="Open items" icon="pair" value={String(openInvoices + openMoney)}
-        caption="lines that need a look"
+        caption={explained ? `${explained} already explained` : "lines that need a look"}
         footer={["Invoices · money", `${openInvoices} · ${openMoney}`]} />
       <Kpi label="Match rate" icon="check" value={`${rate}%`} caption={`${matched} of ${total} lines`}
         aside={<Ring value={rate} />} footer={["Matched automatically", String(matched)]} />

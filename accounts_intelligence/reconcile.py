@@ -18,7 +18,16 @@ import frappe
 from frappe.utils import add_to_date, getdate, now_datetime
 
 from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS
-from accounts_intelligence.sync import BALANCE, DEFAULT_SYNC_EVERY, ENTITY, SYNC_EVERY, TRANSACTION
+from accounts_intelligence.sync import (
+	BALANCE,
+	DEFAULT_SYNC_EVERY,
+	ENTITY,
+	SYNC_EVERY,
+	TRANSACTION,
+	row_key,
+)
+
+OPEN_ITEM = "Accounts Intelligence Open Item"
 
 # Rupees. The two books round taxes differently, so the same invoice can differ by a few paise.
 TOLERANCE = 1.0
@@ -116,6 +125,7 @@ def reconcile(a, b, from_date=None, to_date=None) -> dict:
 		lines += _orient(match_invoices(sales, purchases), seller == a)
 	lines += match_money(_money(sides[a]), _money(sides[b]))
 	lines.sort(key=lambda line: (line["date"], line["kind"], line["status"]))
+	_attach_reviews(a, b, lines)
 
 	balance = _balances(a, b)
 	# The site URL lets the frontend link each document to the company site that holds it.
@@ -138,6 +148,34 @@ def reconcile(a, b, from_date=None, to_date=None) -> dict:
 		"trend": _trend(lines),
 		"lines": lines,
 	}
+
+
+def line_key(a, b, line) -> str:
+	"""A stable name for a line, from its pair and its documents, so a review stays with the same line
+	whichever way round the pair is asked for."""
+	docs = [f"{d['doctype']}:{d['name']}" if d else "-" for d in (line["a"], line["b"])]
+	if a > b:
+		a, b, docs = b, a, docs[::-1]
+	return row_key(a, b, line["kind"], *docs)
+
+
+def _attach_reviews(a, b, lines):
+	"""Give every line its key, and every open line the review someone saved for it, if any."""
+	first, second = sorted((a, b))
+	reviews = {
+		r.name: r
+		for r in frappe.get_all(
+			OPEN_ITEM,
+			{"pair_a": first, "pair_b": second},
+			["name", "status", "assigned_to", "reason", "note"],
+		)
+	}
+	for line in lines:
+		line["key"] = line_key(a, b, line)
+		review = reviews.get(line["key"]) if line["status"] != "matched" else None
+		line["review"] = (
+			{k: review[k] for k in ("status", "assigned_to", "reason", "note")} if review else None
+		)
 
 
 def _trend(lines) -> dict:
@@ -392,6 +430,10 @@ def _summary(lines, balance, whole_history) -> dict:
 		summary[kind.lower()] = counts
 	open_lines = [line for line in lines if line["status"] != "matched"]
 	summary["open"] = len(open_lines)
+	# Open lines someone has looked into and explained; they still count as open, since the books differ.
+	summary["explained"] = sum(
+		1 for line in open_lines if (line["review"] or {}).get("status") == "Explained"
+	)
 	summary["balance_difference"] = balance["difference"]
 	summary["unexplained"] = (
 		round(balance["difference"] - sum(line["difference"] for line in lines), 2) if whole_history else None

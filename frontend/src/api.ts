@@ -21,6 +21,15 @@ export interface Doc {
   reference_no?: string;
 }
 
+export type ReviewStatus = "Open" | "In progress" | "Explained";
+
+export interface Review {
+  status: ReviewStatus;
+  assigned_to: string | null;
+  reason: string | null;
+  note: string | null;
+}
+
 export interface Line {
   kind: "Invoice" | "Money";
   status: Status;
@@ -28,12 +37,35 @@ export interface Line {
   a: Doc | null;
   b: Doc | null;
   difference: number;
+  /** Stable across reloads: the review of an open line is saved under it. */
+  key: string;
+  review: Review | null;
 }
+
+export interface OpenItem extends Line {
+  pair: { a: Company; b: Company };
+  age: number;
+}
+
+export interface User {
+  name: string;
+  full_name: string;
+}
+
+export const REASONS = [
+  "Timing difference",
+  "Booked under another party",
+  "Will be booked",
+  "Disputed",
+  "Not an inter-company transaction",
+  "Other",
+];
 
 export interface Summary {
   invoice: Counts;
   money: Counts;
   open: number;
+  explained: number;
   balance_difference: number;
   unexplained: number | null;
 }
@@ -169,7 +201,23 @@ export interface RptReport {
   rows: RptRow[];
 }
 
-export const getRpt = (period: Period, company?: string) => call<RptReport>("rpt.report", { ...period, company });
+export const getOpenItems = (period: Period) => call<{ items: OpenItem[]; users: User[] }>("open_items.items", { ...period });
+export const saveReview = (item: OpenItem, review: Review) =>
+  call<Review>(
+    "open_items.review",
+    {
+      a: item.pair.a.pan,
+      b: item.pair.b.pan,
+      key: item.key,
+      status: review.status,
+      assigned_to: review.assigned_to ?? "",
+      reason: review.reason ?? "",
+      note: review.note ?? "",
+    },
+    true,
+  );
+
+export const getRpt =(period: Period, company?: string) => call<RptReport>("rpt.report", { ...period, company });
 export const getAssistantStatus =() => call<{ available: boolean; reason: string | null }>("assistant.status", {});
 export const ask = (question: string, history: { question: string; answer: string }[]) =>
   call<Answer>("assistant.ask", { question, history: JSON.stringify(history) }, true);

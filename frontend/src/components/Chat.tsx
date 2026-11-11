@@ -39,7 +39,12 @@ function save(messages: Message[]) {
   }
 }
 
-export default function Chat({ onClose }: { onClose?: () => void }) {
+export default function Chat({ onClose, pending, onPendingSent }: {
+  onClose?: () => void;
+  /** A question another page asked the assistant (see askAssistant), sent as soon as the panel can. */
+  pending?: string | null;
+  onPendingSent?: () => void;
+}) {
   const status = useLoad(getAssistantStatus, "status");
   const [messages, setMessages] = useState<Message[]>(load);
   const [draft, setDraft] = useState("");
@@ -73,6 +78,14 @@ export default function Chat({ onClose }: { onClose?: () => void }) {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (pending && available && !busy) {
+      onPendingSent?.();
+      send(pending);
+    }
+    // Only a new question or the assistant becoming available should send it.
+  }, [pending, available]);
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

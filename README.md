@@ -15,6 +15,7 @@ Works on **Frappe / ERPNext v15 and v16**, and runs on Frappe Cloud with no infr
 | Inter-company reconciliation: invoices, payments and balances | **Built and tested** |
 | Reconciliation frontend at `/intelligence` on the server | **Built** |
 | Related-party transactions (RPT) report and register | **Built and tested** |
+| Open items work queue: assign, explain, ask AI | **Built and tested** |
 | Assistant: questions about the reconciliation, using the AI Interface app | **Built and tested** |
 
 The rest of this README describes what is built today: the trust layer every later part relies on, the data sync that runs over it, and the reconciliation that reads the synced data.
@@ -142,6 +143,27 @@ Over the whole history, the open lines should explain the balance difference. Wh
 
 It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
 
+### Open items
+
+**Open items** in the frontend is the work queue for the lines that do not match, across every company pair.
+
+**Filters:** status, company pair, type, age, who it is assigned to, and text.
+
+**Each line shows:**
+- its age in days;
+- both companies' documents, or which side has not recorded it;
+- the amount at stake.
+
+**Actions on a line:**
+- **Assign** it to a System Manager.
+- Mark it **In progress**.
+- **Explain** it with a reason (timing difference, booked under another party, will be booked, disputed, not an inter-company transaction, other) and a note.
+- **Ask AI** about it.
+
+**How reviews are stored.** The lines are still worked out by the reconciliation. Only a review someone saves is stored, in **Accounts Intelligence Open Item**, keyed by the line's pair and documents, with its change history. An explained line still counts as open, because the two books still differ. The pair page shows its review, and the dashboard counts it as explained.
+
+Endpoints: `accounts_intelligence.open_items.items` (GET) and `accounts_intelligence.open_items.review` (POST), System Manager only.
+
 ## Related-party transactions
 
 The report for Ind AS 24 and section 188 of the Companies Act: for each group company, what it did with each of its related parties in a period. Open **Related parties** in the frontend, choose the company and period (the financial year to date by default), and download it as CSV.
@@ -262,6 +284,7 @@ accounts_intelligence/
   reconcile.py            invoice, money and balance matching; the frontend's two endpoints
   assistant.py            the assistant: plan, run one tool, answer (model via AI Interface)
   rpt.py                  related-party transactions report
+  open_items.py           the open items work queue and its reviews
   overrides.py            blocks reading the private keys through frappe.client.get_password
   www/intelligence.py     serves the frontend page (login, System Manager, server mode)
   public/frontend/        the built frontend, committed so no site needs Node to install the app
@@ -284,6 +307,7 @@ accounts_intelligence/
     accounts_intelligence_transaction/    server: synced document headers
     accounts_intelligence_balance/        server: balances with group companies
     accounts_intelligence_related_party/  server: the related-party register
+    accounts_intelligence_open_item/      server: reviews of open reconciliation lines
   tests/test_auth.py          authentication
   tests/test_key_rotation.py  key rotation and regeneration
   tests/test_hardening.py     security audit fixes
@@ -291,6 +315,7 @@ accounts_intelligence/
   tests/test_reconcile.py     reconciliation
   tests/test_assistant.py     the assistant, with the AI calls replaced
   tests/test_rpt.py           related-party register, sync and report
+  tests/test_open_items.py    the open items queue and reviews
 frontend/                 React + Vite + Tailwind source of the /intelligence page
 ```
 
@@ -311,7 +336,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 110 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 115 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;

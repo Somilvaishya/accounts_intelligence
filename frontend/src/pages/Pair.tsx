@@ -225,6 +225,11 @@ function LineRow({ line, a, b }: { line: Line; a: Company; b: Company }) {
           {statusLabel(line.status, a, b)}
         </span>
         <div className="mt-1 text-[11px] text-ink-3">{line.kind === "Invoice" ? "Invoice" : "Payment / journal"}</div>
+        {line.review && line.review.status !== "Open" && (
+          <div className="mt-1 max-w-[14rem] text-[11px] text-ink-2" title={line.review.note ?? undefined}>
+            {line.review.status}{line.review.reason ? `: ${line.review.reason}` : ""}
+          </div>
+        )}
       </td>
       <DocCell doc={line.a} company={a} lineDate={line.date} />
       <DocCell doc={line.b} company={b} lineDate={line.date} />
