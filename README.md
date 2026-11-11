@@ -14,7 +14,7 @@ Works on **Frappe / ERPNext v15 and v16**, and runs on Frappe Cloud with no infr
 | Sending accounting data from clients to the server | **Built and tested** |
 | Inter-company reconciliation: invoices, payments and balances | **Built and tested** |
 | Reconciliation frontend at `/intelligence` on the server | **Built** |
-| Chat over the group's data, limited to each user's permissions | Planned |
+| Assistant: questions about the reconciliation, using the AI Interface app | **Built and tested** |
 
 The rest of this README describes what is built today: the trust layer every later part relies on, the data sync that runs over it, and the reconciliation that reads the synced data.
 
@@ -137,9 +137,28 @@ Over the whole history, the open lines should explain the balance difference. Wh
 **The frontend.** On the server, open `/intelligence` (System Manager only).
 - **Dashboard:** the total balance gap, open items, match rate and unexplained amount; charts of the gap per company pair, lines per month, open items by age and the group as a network; then every pair with its matched and open counts. The sidebar lists the pairs and shows how the company sites are syncing.
 - **Pair page:** both companies' balances, what makes up the difference, open items by age, then every line side by side, filtered by status, type, period or text, with a CSV download. Each document links to the company site that holds it.
-- Light and dark themes. A panel for the assistant is in place; the assistant itself is the next step.
+- Light and dark themes, and the assistant in a side panel.
 
 It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
+
+## The assistant
+
+Questions in plain language about the reconciliation, such as "which payments are recorded on one side only?" or "why do GGIL and GGSPL differ?", answered with the lines behind the answer.
+
+**The AI model comes from the [AI Interface](https://github.com/sagarrgarg/ai-interface) app.** Its provider, model, budget, rate limit and call log apply, and its AI Call Log shows every call under the app `accounts_intelligence`. AI Interface is needed for the assistant only: without it, or without a default provider in **AI Settings**, the panel says what is missing and the rest of the app works as before.
+
+A question costs at most two calls:
+1. **Plan.** The model picks one tool and its arguments: a group summary, one pair's summary, open items (by company, type, status, recorded by, period, age, amount), or a document by its number, bill or bank reference.
+2. **Answer.** `assistant.py` runs that tool on the reconciled data, then the model words the answer from the result only.
+
+**What keeps it safe.**
+- The model never writes a query, and sees nothing but the tool's result.
+- Amounts and who owes whom reach the model already worked out, so it does no arithmetic.
+- An unknown tool, company or argument is refused rather than guessed.
+- Only a System Manager can ask, and nothing is written.
+- The conversation is kept in the browser, and the last few turns go back with each question for follow-ups.
+
+Endpoints: `accounts_intelligence.assistant.status` (GET) and `accounts_intelligence.assistant.ask` (POST).
 
 ## Installation
 
@@ -218,6 +237,7 @@ Use two different host names so the browser keeps the two logins apart, and turn
 accounts_intelligence/
   api.py                  public endpoints: identity, connect, ping, rotate_key, sync_config, sync
   reconcile.py            invoice, money and balance matching; the frontend's two endpoints
+  assistant.py            the assistant: plan, run one tool, answer (model via AI Interface)
   overrides.py            blocks reading the private keys through frappe.client.get_password
   www/intelligence.py     serves the frontend page (login, System Manager, server mode)
   public/frontend/        the built frontend, committed so no site needs Node to install the app
@@ -244,6 +264,7 @@ accounts_intelligence/
   tests/test_hardening.py     security audit fixes
   tests/test_sync.py          data sync
   tests/test_reconcile.py     reconciliation
+  tests/test_assistant.py     the assistant, with the AI calls replaced
 frontend/                 React + Vite + Tailwind source of the /intelligence page
 ```
 
@@ -264,7 +285,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 94 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 103 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;

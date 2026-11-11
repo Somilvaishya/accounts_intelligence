@@ -95,16 +95,41 @@ export interface Period {
   to_date?: string;
 }
 
-async function call<T>(method: string, params: Record<string, string | undefined>): Promise<T> {
+/** A line the assistant found, with its pair and a readable status. */
+export interface FoundLine extends Line {
+  pair: { a: Company; b: Company };
+  status_label: string;
+}
+
+export interface Answer {
+  ok: boolean;
+  answer: string;
+  tool?: string;
+  lines?: FoundLine[];
+}
+
+async function call<T>(method: string, params: Record<string, string | undefined>, post = false): Promise<T> {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) if (value) query.set(key, value);
-  const response = await fetch(`/api/method/accounts_intelligence.reconcile.${method}?${query}`, {
-    headers: { Accept: "application/json" },
+  const url = `/api/method/accounts_intelligence.${method}`;
+  const response = await fetch(post ? url : `${url}?${query}`, {
+    method: post ? "POST" : "GET",
+    headers: {
+      Accept: "application/json",
+      ...(post && { "Content-Type": "application/x-www-form-urlencoded", "X-Frappe-CSRF-Token": window.csrf_token ?? "" }),
+    },
+    body: post ? query : undefined,
     credentials: "same-origin",
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(serverMessage(body) || `The server answered ${response.status}.`);
   return body.message as T;
+}
+
+declare global {
+  interface Window {
+    csrf_token?: string;
+  }
 }
 
 /** The message Frappe puts in _server_messages, or the exception's last line. */
@@ -119,8 +144,11 @@ function serverMessage(body: { _server_messages?: string; exception?: string }):
   return body.exception?.split(":").slice(1).join(":").trim() || "";
 }
 
-export const getDashboard = (period: Period) => call<Dashboard>("dashboard", { ...period });
-export const getPair = (a: string, b: string, period: Period) => call<PairResult>("pair", { a, b, ...period });
+export const getDashboard = (period: Period) => call<Dashboard>("reconcile.dashboard", { ...period });
+export const getPair = (a: string, b: string, period: Period) => call<PairResult>("reconcile.pair", { a, b, ...period });
+export const getAssistantStatus = () => call<{ available: boolean; reason: string | null }>("assistant.status", {});
+export const ask = (question: string, history: { question: string; answer: string }[]) =>
+  call<Answer>("assistant.ask", { question, history: JSON.stringify(history) }, true);
 
 /** Load data whenever `key` changes, dropping the answer to a request that has been superseded. */
 export function useLoad<T>(load: () => Promise<T>, key: string) {

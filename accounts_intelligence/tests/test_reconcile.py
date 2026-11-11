@@ -51,19 +51,24 @@ def _status(result, name):
 	return found[0] if len(found) == 1 else found
 
 
+def two_companies():
+	"""Empty sync tables and two group companies, Alpha Ltd (A) and Beta Ltd (B)."""
+	for doctype in (ENTITY, TRANSACTION, BALANCE):
+		frappe.db.delete(doctype)
+	for pan, name in ((A, "Alpha Ltd"), (B, "Beta Ltd")):
+		frappe.get_doc(
+			{
+				"doctype": ENTITY,
+				"pan": pan,
+				"company_name": name,
+				"site_url": f"https://{pan}.example.com",
+			}
+		).insert(ignore_permissions=True)
+
+
 class TestReconcile(FrappeTestCase):
 	def setUp(self):
-		for doctype in (ENTITY, TRANSACTION, BALANCE):
-			frappe.db.delete(doctype)
-		for pan, name in ((A, "Alpha Ltd"), (B, "Beta Ltd")):
-			frappe.get_doc(
-				{
-					"doctype": ENTITY,
-					"pan": pan,
-					"company_name": name,
-					"site_url": f"https://{pan}.example.com",
-				}
-			).insert(ignore_permissions=True)
+		two_companies()
 
 	def test_invoices_match_by_bill_number_then_by_date_and_amount(self):
 		_add(A, "Sales Invoice", "SI-0001", "2026-10-01", 1180)

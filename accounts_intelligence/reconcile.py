@@ -42,17 +42,9 @@ def dashboard(from_date=None, to_date=None) -> dict:
 	"""Every pair of group companies with data and how far their books agree, the group's lines per month
 	and open lines by age, and how the company sites are syncing."""
 	frappe.only_for("System Manager")
-	pairs = frappe.db.sql(
-		f"""select distinct least(entity, counterparty) as a, greatest(entity, counterparty) as b
-		from `tab{TRANSACTION}` where entity != counterparty
-		union select distinct least(entity, counterparty), greatest(entity, counterparty)
-		from `tab{BALANCE}` where entity != counterparty
-		order by a, b""",
-		as_dict=True,
-	)
 	result, months, ageing = [], {}, [{"bucket": label, "count": 0, "amount": 0.0} for _, label in AGEING]
-	for pair_row in pairs:
-		data = reconcile(pair_row.a, pair_row.b, from_date, to_date)
+	for a, b in pairs():
+		data = reconcile(a, b, from_date, to_date)
 		result.append({"a": data["a"], "b": data["b"], "summary": data["summary"]})
 		for month in data["trend"]["months"]:
 			key = month["month"]
@@ -68,6 +60,18 @@ def dashboard(from_date=None, to_date=None) -> dict:
 		"ageing": ageing,
 		"sync": _sync_health(),
 	}
+
+
+def pairs() -> list[tuple[str, str]]:
+	"""Every pair of group companies (PANs) with a synced document or balance, each pair once."""
+	rows = frappe.db.sql(
+		f"""select distinct least(entity, counterparty), greatest(entity, counterparty)
+		from `tab{TRANSACTION}` where entity != counterparty
+		union select distinct least(entity, counterparty), greatest(entity, counterparty)
+		from `tab{BALANCE}` where entity != counterparty
+		order by 1, 2"""
+	)
+	return [(a, b) for a, b in rows]
 
 
 def _sync_health() -> dict:
