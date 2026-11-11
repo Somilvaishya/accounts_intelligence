@@ -73,7 +73,10 @@ def config_handler(request) -> dict:
 	watch = sorted(set(known) | set(related))
 	rules = site_rules(request.row.name)
 	# Every client run starts here, even when it has nothing to send, so this is when the site last synced.
-	frappe.db.set_value(ALLOWED_SITE, request.row.name, "last_sync_on", now_datetime(), update_modified=False)
+	values = {"last_sync_on": now_datetime()}
+	if isinstance(request.data.get("last_result"), str):
+		values["last_result"] = request.data["last_result"][:1000]
+	frappe.db.set_value(ALLOWED_SITE, request.row.name, values, update_modified=False)
 	return {
 		"ok": True,
 		"entities": accepted,

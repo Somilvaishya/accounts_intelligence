@@ -7,6 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import OpenItems from "./pages/OpenItems";
 import Pair from "./pages/Pair";
 import RelatedParties from "./pages/RelatedParties";
+import SyncHealth from "./pages/SyncHealth";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -17,6 +18,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           <Route path="pair/:a/:b" element={<Pair />} />
           <Route path="related-parties" element={<RelatedParties />} />
           <Route path="open-items" element={<OpenItems />} />
+          <Route path="sync-health" element={<SyncHealth />} />
           <Route path="*" element={<Dashboard />} />
         </Route>
       </Routes>

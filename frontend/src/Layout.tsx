@@ -145,6 +145,10 @@ function Sidebar({ dashboard, query, open, onClose }: { dashboard?: Dashboard; q
           <NavLink to={`/related-parties${query}`} className={item} onClick={onClose}>
             <Icon name="users" /> Related parties
           </NavLink>
+          <NavLink to={`/sync-health${query}`} className={item} onClick={onClose}>
+            <Icon name="pulse" /> <span className="flex-1">Sync health</span>
+            <span className={`h-2 w-2 rounded-full ${syncTone}`} />
+          </NavLink>
           <a href="/app/accounts-intelligence-settings" className={item({ isActive: false })}>
             <Icon name="settings" /> Settings
           </a>
@@ -163,7 +167,7 @@ function Sidebar({ dashboard, query, open, onClose }: { dashboard?: Dashboard; q
         </nav>
 
         <div className="p-3">
-          <div className="rounded-lg bg-sunken p-3">
+          <Link to={`/sync-health${query}`} onClick={onClose} className="block rounded-lg bg-sunken p-3 hover:ring-1 hover:ring-line">
             <div className="flex items-center justify-between">
               <span className="caps">Sync</span>
               <span className={`h-2 w-2 rounded-full ${syncTone}`} />
@@ -176,7 +180,7 @@ function Sidebar({ dashboard, query, open, onClose }: { dashboard?: Dashboard; q
                 </>
               )}
             </p>
-          </div>
+          </Link>
         </div>
       </aside>
     </>

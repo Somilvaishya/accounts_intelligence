@@ -16,6 +16,7 @@ Works on **Frappe / ERPNext v15 and v16**, and runs on Frappe Cloud with no infr
 | Reconciliation frontend at `/intelligence` on the server | **Built** |
 | Related-party transactions (RPT) report and register | **Built and tested** |
 | Open items work queue: assign, explain, ask AI | **Built and tested** |
+| Sync health: site states, warnings and activity | **Built and tested** |
 | Assistant: questions about the reconciliation, using the AI Interface app | **Built and tested** |
 
 The rest of this README describes what is built today: the trust layer every later part relies on, the data sync that runs over it, and the reconciliation that reads the synced data.
@@ -142,6 +143,35 @@ Over the whole history, the open lines should explain the balance difference. Wh
 - Light and dark themes, and the assistant in a side panel.
 
 It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
+
+### Sync health
+
+**Sync health** in the frontend shows every company site on the server's list, on one page.
+
+**Each site's state:**
+- **Healthy**
+- **Late:** no sync for twice the interval
+- **Never synced**
+- **Pending**
+- **Disabled**
+- **Revoked**
+
+**For each site:**
+- its companies and site address
+- the last sync and the size of its last batch
+- the daily check, with an amber flag when months differ
+- a bar per hour for the last 24 hours of accepted sync calls, from the Auth Log
+- refused calls
+- how many of its documents are stored here
+
+**Warnings** come from each site's own **Last Sync Result**. A client sends it with its next config call, and the server keeps it on the site's row. They include:
+- a run that failed;
+- a party named like a group company or related party but without a matching PAN;
+- a daily check that differs.
+
+Each warning clears on the site's next run once it is fixed there.
+
+Endpoint: `accounts_intelligence.health.sites` (GET, System Manager only).
 
 ### Open items
 
@@ -285,6 +315,7 @@ accounts_intelligence/
   assistant.py            the assistant: plan, run one tool, answer (model via AI Interface)
   rpt.py                  related-party transactions report
   open_items.py           the open items work queue and its reviews
+  health.py               sync health: each site's state, warnings and activity
   overrides.py            blocks reading the private keys through frappe.client.get_password
   www/intelligence.py     serves the frontend page (login, System Manager, server mode)
   public/frontend/        the built frontend, committed so no site needs Node to install the app
@@ -316,6 +347,7 @@ accounts_intelligence/
   tests/test_assistant.py     the assistant, with the AI calls replaced
   tests/test_rpt.py           related-party register, sync and report
   tests/test_open_items.py    the open items queue and reviews
+  tests/test_health.py        sync health
 frontend/                 React + Vite + Tailwind source of the /intelligence page
 ```
 
@@ -336,7 +368,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 115 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 120 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;

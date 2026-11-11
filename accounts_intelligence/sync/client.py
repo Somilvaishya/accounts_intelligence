@@ -26,6 +26,7 @@ from accounts_intelligence.sync import (
 	pan_of,
 )
 
+MAX_RESULT = 1000
 # Scheduled jobs on the default queue time out at 300 seconds; a run stops sending well before that.
 TIME_BUDGET = 120
 JOURNAL_LIMIT = MAX_ROWS // 5
@@ -125,7 +126,13 @@ def _run(settings, deadline) -> str:
 def _refresh_config(settings, state) -> list:
 	companies, notes = own_companies()
 	reply = transport.post_signed(
-		settings, "sync_config", {"companies": [{"company": c, "pan": p} for c, p in companies.items()]}
+		settings,
+		"sync_config",
+		{
+			"companies": [{"company": c, "pan": p} for c, p in companies.items()],
+			# The previous run's result, so the server's Sync Health page shows this site's warnings.
+			"last_result": (settings.last_sync_result or "")[:MAX_RESULT],
+		},
 	)
 	_check_reply(settings, reply)
 	accepted = set(reply.get("entities") or [])

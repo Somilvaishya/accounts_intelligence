@@ -36,6 +36,7 @@ MANAGED_ROW_FIELDS = (
 	"last_sync_rows",
 	"resync_requested_on",
 	"last_check",
+	"last_result",
 )
 
 

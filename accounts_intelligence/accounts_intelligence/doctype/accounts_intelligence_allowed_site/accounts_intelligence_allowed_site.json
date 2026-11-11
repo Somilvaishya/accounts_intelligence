@@ -19,7 +19,8 @@
   "last_sync_rows",
   "sync_from",
   "resync_requested_on",
-  "last_check"
+  "last_check",
+  "last_result"
  ],
  "fields": [
   {
@@ -126,11 +127,18 @@
    "fieldtype": "Small Text",
    "label": "Last Daily Check",
    "read_only": 1
+  },
+  {
+   "description": "What the site reported after its last run, warnings included. It arrives with the site's next run.",
+   "fieldname": "last_result",
+   "fieldtype": "Small Text",
+   "label": "Last Sync Result",
+   "read_only": 1
   }
  ],
  "istable": 1,
  "links": [],
- "modified": "2026-11-05 14:00:00.000000",
+ "modified": "2026-11-12 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Allowed Site",

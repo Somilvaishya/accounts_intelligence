@@ -217,7 +217,32 @@ export const saveReview = (item: OpenItem, review: Review) =>
     true,
   );
 
-export const getRpt =(period: Period, company?: string) => call<RptReport>("rpt.report", { ...period, company });
+export type SiteState = "Healthy" | "Late" | "Never synced" | "Pending" | "Revoked" | "Disabled";
+
+export interface SiteHealth {
+  site_url: string;
+  state: SiteState;
+  companies: { pan: string; name: string }[];
+  fingerprint: string | null;
+  approved_on: string | null;
+  last_seen: string | null;
+  last_sync_on: string | null;
+  last_sync_rows: number | null;
+  sync_from: string | null;
+  last_check: string | null;
+  last_result: string | null;
+  documents: number;
+  latest_document: string | null;
+  warnings: string[];
+  /** Accepted sync calls in each of the last 24 hours, oldest first. */
+  activity: number[];
+  rejected: number;
+}
+
+export const getSyncHealth = () =>
+  call<{ sync_every: number; server_time: string; sites: SiteHealth[] }>("health.sites", {});
+
+export const getRpt = (period: Period, company?: string) => call<RptReport>("rpt.report", { ...period, company });
 export const getAssistantStatus =() => call<{ available: boolean; reason: string | null }>("assistant.status", {});
 export const ask = (question: string, history: { question: string; answer: string }[]) =>
   call<Answer>("assistant.ask", { question, history: JSON.stringify(history) }, true);
