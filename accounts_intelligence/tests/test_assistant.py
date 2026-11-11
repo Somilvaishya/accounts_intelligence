@@ -2,18 +2,29 @@
 page gets back, not what a model would say."""
 
 import json
+import re
 from unittest.mock import patch
 
 import frappe
 
-from accounts_intelligence import assistant
+from accounts_intelligence import assistant, open_items
+from accounts_intelligence.reconcile import OPEN_ITEM
+from accounts_intelligence.sync import RELATED_PARTY
 from accounts_intelligence.tests.test_auth import FrappeTestCase
 from accounts_intelligence.tests.test_reconcile import A, B, _add, _balance, two_companies
+from accounts_intelligence.tests.test_rpt import DIRECTOR, _tx
+
+
+def _documents(lines) -> list[str]:
+	"""The document numbers in the lines the model is given."""
+	return [re.search(r"\b(SI|PI|PAY)-\d+\b", json.dumps(line)).group(0) for line in lines]
 
 
 class TestAssistant(FrappeTestCase):
 	def setUp(self):
 		two_companies()
+		frappe.db.delete(OPEN_ITEM)
+		frappe.db.delete(RELATED_PARTY)
 		_add(A, "Sales Invoice", "SI-1", "2026-10-01", 100)
 		_add(B, "Purchase Invoice", "PI-1", "2026-10-02", 250, bill_no="SI-7")
 		_add(A, "Payment Entry", "PAY-1", "2026-10-05", 5000, payment_type="Pay")
@@ -105,3 +116,45 @@ class TestAssistant(FrappeTestCase):
 		finally:
 			frappe.set_user("Administrator")
 			frappe.flags.in_test = in_test
+
+	def test_an_email_draft_lists_what_the_other_company_has_to_look_at(self):
+		plan = {"tool": "draft_email", "args": {"a": "AL", "b": "BL"}}
+		result = self._ask(
+			json.dumps(plan), "Subject: Open items\n\nDear Beta team,\n- SI-1", question="Write to Beta"
+		)
+		self.assertEqual(result["draft"], {"subject": "Open items", "body": "Dear Beta team,\n- SI-1"})
+		self.assertIn("draft to Beta Ltd", result["answer"])
+		self.assertIn("accounts team of Alpha Ltd", self.prompts[1])
+
+		facts, _ = assistant.draft_email(assistant._companies(), A, B)
+		self.assertEqual(_documents(facts["missing_in_your_books"]), ["SI-1", "PAY-1"])
+		self.assertEqual(_documents(facts["in_your_books_not_ours"]), ["PI-1"])
+		self.assertEqual(facts["balance_in_our_books"], "BL owes AL ₹1,000.00")
+
+	def test_an_explained_line_is_left_out_of_the_draft_and_shown_in_answers(self):
+		key = next(i["key"] for i in open_items.items()["items"] if (i["a"] or {}).get("name") == "SI-1")
+		open_items.review(A, B, key, status="Explained", reason="Will be booked", note="in November")
+		facts, _ = assistant.draft_email(assistant._companies(), A, B)
+		self.assertEqual(len(facts["missing_in_your_books"]), 1, "only PAY-1 is left to ask about")
+
+		self._ask(json.dumps({"tool": "open_items", "args": {}}), "ok")
+		self.assertIn("Explained; Will be booked; in November", self.prompts[1])
+
+	def test_a_draft_without_a_subject_line_gets_one(self):
+		draft = assistant._split_draft("Dear team, please check.", {"from": "Alpha Ltd", "to": "Beta Ltd"})
+		self.assertEqual(draft["subject"], "Reconciliation between Alpha Ltd and Beta Ltd")
+
+	def test_related_party_transactions_come_from_the_rpt_report(self):
+		frappe.get_doc(
+			{
+				"doctype": RELATED_PARTY,
+				"pan": DIRECTOR,
+				"party_name": "Director One",
+				"relationship": "Key managerial personnel",
+			}
+		).insert(ignore_permissions=True)
+		_tx(A, DIRECTOR, "Sales Invoice", "SI-D", "2026-08-01", 1000, tax=180)
+		plan = {"tool": "related_party_transactions", "args": {"company": "AL", "from_date": "2026-04-01"}}
+		self._ask(json.dumps(plan), "Sold ₹1,000.00 to the director.")
+		self.assertIn("Director One", self.prompts[1])
+		self.assertIn('"sales": "₹1,000.00"', self.prompts[1], "without tax")

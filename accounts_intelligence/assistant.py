@@ -20,7 +20,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, getdate, today
 
-from accounts_intelligence import reconcile
+from accounts_intelligence import reconcile, rpt
 from accounts_intelligence.sync import ENTITY
 
 CALLING_APP = "accounts_intelligence"
@@ -65,6 +65,19 @@ def ask(question: str, history: str | list | None = None) -> dict:
 			}
 		tool, args = _validate(plan, companies)
 		facts, lines = TOOLS[tool](companies, **args)
+		if tool == "draft_email":
+			# A draft only: the person reads it, changes it and sends it themselves.
+			draft = _split_draft(_call(_draft_prompt(question, facts), "draft"), facts)
+			return {
+				"ok": True,
+				"answer": _(
+					"Here is a draft to {0}. Check it, then copy it or open it in your email."
+				).format(facts["to"]),
+				"draft": draft,
+				"tool": tool,
+				"args": args,
+				"lines": lines[:SHOWN_LINES],
+			}
 		answer = _call(_answer_prompt(question, tool, facts, turns), "answer")
 	except (Refused, *_limit_errors()) as e:
 		# An expected refusal is an answer, not a failure: say it plainly.
@@ -260,11 +273,82 @@ def find_document(companies, text) -> tuple[dict, list]:
 	return {"lines_found": len(found), "lines": [_line_facts(line) for line in found[:MAX_LINES]]}, found
 
 
+def draft_email(companies, a, b) -> tuple[dict, list]:
+	"""What company `a` asks company `b` to look at: documents only in a's books, which b has to book;
+	amounts or dates that differ; and documents only in b's books, which a has to book itself. Lines
+	already explained are left out."""
+	data = reconcile.reconcile(*sorted((a, b)))
+	only_sender = "only_a" if data["a"]["pan"] == a else "only_b"
+	groups = {"missing_in_your_books": [], "amount_or_date_differs": [], "in_your_books_not_ours": []}
+	found = []
+	for line in data["lines"]:
+		if line["status"] == "matched" or (line["review"] or {}).get("status") == "Explained":
+			continue
+		if line["status"] == only_sender:
+			group = "missing_in_your_books"
+		elif reconcile.OUTCOME[line["status"]] == "differs":
+			group = "amount_or_date_differs"
+		else:
+			group = "in_your_books_not_ours"
+		item = _line(line, data, companies)
+		found.append(item)
+		groups[group].append(_line_facts(item))
+
+	sender, recipient = companies[a], companies[b]
+	ours, theirs = (data["balance"]["a"], data["balance"]["b"])[:: 1 if data["a"]["pan"] == a else -1]
+	facts = {
+		"from": sender.name,
+		"to": recipient.name,
+		"balance_in_our_books": _owes(ours, {"pan": a}, {"pan": b}, companies),
+		"balance_in_your_books": _owes(theirs, {"pan": b}, {"pan": a}, companies),
+		"balance_difference": _inr(abs(data["balance"]["difference"])),
+	}
+	for group, lines in groups.items():
+		facts[group] = lines[:30]
+		if len(lines) > 30:
+			facts[f"{group}_note"] = f"Only 30 of {len(lines)} are listed; the full list follows separately."
+	return facts, found
+
+
+def related_party_transactions(companies, company=None, from_date=None, to_date=None) -> tuple[dict, list]:
+	data = rpt.report(from_date, to_date, company)
+
+	def balance(value):
+		if value is None:
+			return "not known"
+		if abs(value) < 0.005:
+			return "settled"
+		return f"{'receivable' if value > 0 else 'payable'} {_inr(abs(value))}"
+
+	rows = [
+		{
+			"company": companies[r["company"]["pan"]].short
+			if r["company"]["pan"] in companies
+			else r["company"]["name"],
+			"related_party": r["party"]["name"],
+			"relationship": r["party"]["relationship"],
+			**{k: _inr(r[k]) for k in ("sales", "purchases", "received", "paid", "journals") if r[k]},
+			"closing_balance": balance(r["balance"]),
+		}
+		for r in data["rows"]
+	]
+	facts = {
+		"period": f"{data['from_date']} to {data['to_date']}",
+		"note": "Sales and purchases are without tax; payroll remuneration is not included.",
+		"rows": rows[:MAX_LINES],
+	}
+	if len(rows) > MAX_LINES:
+		facts["rows_note"] = f"Only the first {MAX_LINES} of {len(rows)} rows are listed."
+	return facts, []
+
+
 TOOLS = {
 	"group_summary": group_summary,
 	"pair_summary": pair_summary,
 	"open_items": open_items,
 	"find_document": find_document,
+	"draft_email": draft_email,
+	"related_party_transactions": related_party_transactions,
 }
 
 
@@ -310,13 +394,20 @@ def _line_facts(line) -> dict:
 		return f"{d['doctype']} {d['name']} dated {d['date']} for {_inr(abs(d['amount']))}{ref}"
 
 	a, b = line["pair"]["a"], line["pair"]["b"]
-	return {
+	facts = {
 		"date": line["date"],
 		"status": line["status_label"],
 		f"{_acronym(a['name'])}": doc(line["a"]),
 		f"{_acronym(b['name'])}": doc(line["b"]),
 		"difference": _inr(abs(line["difference"])),
 	}
+	review = line.get("review")
+	if review and (review["status"] != "Open" or review["assigned_to"]):
+		parts = [review["status"], review["reason"], review["note"]]
+		if review["assigned_to"]:
+			parts.append(f"assigned to {frappe.utils.get_fullname(review['assigned_to'])}")
+		facts["review"] = "; ".join(p for p in parts if p)
+	return facts
 
 
 def _recorded_only_by(line, data, pan) -> bool:
@@ -382,12 +473,21 @@ def _validate(plan, companies) -> tuple[str, dict]:
 		)
 	raw = plan.get("args") if isinstance(plan.get("args"), dict) else {}
 	args = {}
-	if tool in ("pair_summary", "open_items"):
+	if tool in ("pair_summary", "open_items", "draft_email"):
 		for key in ("a", "b"):
 			if raw.get(key):
 				args[key] = _company(raw[key], companies)
-		if tool == "pair_summary" and not (args.get("a") and args.get("b") and args["a"] != args["b"]):
+		if tool != "open_items" and not (args.get("a") and args.get("b") and args["a"] != args["b"]):
 			raise Refused(_("Name the two companies of the pair."))
+	if tool in ("open_items", "related_party_transactions"):
+		for key in ("from_date", "to_date"):
+			if raw.get(key):
+				try:
+					args[key] = str(getdate(raw[key]))
+				except Exception:
+					raise Refused(_("{0} is not a date I can use.").format(raw[key]))
+	if tool == "related_party_transactions" and raw.get("company"):
+		args["company"] = _company(raw["company"], companies)
 	if tool == "open_items":
 		if raw.get("kind"):
 			args["kind"] = KINDS.get(str(raw["kind"]).lower())
@@ -395,12 +495,6 @@ def _validate(plan, companies) -> tuple[str, dict]:
 			args["status"] = raw["status"]
 		if raw.get("recorded_by"):
 			args["recorded_by"] = _company(raw["recorded_by"], companies)
-		for key in ("from_date", "to_date"):
-			if raw.get(key):
-				try:
-					args[key] = str(getdate(raw[key]))
-				except Exception:
-					raise Refused(_("{0} is not a date I can use.").format(raw[key]))
 		for key, cast in (("older_than_days", int), ("min_amount", float), ("limit", int)):
 			if raw.get(key) not in (None, ""):
 				try:
@@ -461,6 +555,11 @@ TOOLS
   match. "missing" means recorded by one company only; "recorded_by" is the company that has it when the
   other does not. "money" means payments and journal entries.
 - find_document {{"text": "..."}}: a document, bill or bank reference number, matched or not.
+- draft_email {{"a": company, "b": company}}: draft an email from company a's accounts team to company b's,
+  listing the documents b has to book or check. Use it when asked to write, draft or send a message.
+- related_party_transactions {{"company"?: company, "from_date"?: "YYYY-MM-DD", "to_date"?: "YYYY-MM-DD"}}:
+  sales, purchases, money and balances with related parties (directors, their relatives and firms, other
+  group companies) for a period; the financial year to date when no dates are given.
 {_history_block(turns)}
 QUESTION: {question}
 
@@ -482,6 +581,38 @@ DATA ({tool.replace("_", " ")}):
 {json.dumps(facts, default=str, indent=1, ensure_ascii=False)[:9000]}
 
 ANSWER:"""
+
+
+def _draft_prompt(question, facts) -> str:
+	return f"""Write an email from the accounts team of {facts["from"]} to the accounts team of {facts["to"]}
+about the differences between their books.
+
+RULES
+- First line exactly "Subject: <subject>", then a blank line, then the body.
+- Polite, plain business English. Under 250 words where the lists allow.
+- State the balance each side shows and the difference, then list the documents in short "- " bullets with
+  their number, date and amount exactly as written in the data.
+- Ask them to book what is missing in their books, and to check and correct what differs. Say that the
+  documents only in their books will be booked on our side.
+- Leave out any section that has no documents. Do not invent names, people, dates or amounts.
+- End with "Regards," and "{facts["from"]} accounts team".
+- Follow any extra instruction in the request, unless it breaks a rule above.
+
+REQUEST: {question}
+
+DATA:
+{json.dumps(facts, default=str, indent=1, ensure_ascii=False)[:9000]}
+
+EMAIL:"""
+
+
+def _split_draft(text, facts) -> dict:
+	"""The model's draft as a subject and a body."""
+	text = (text or "").strip()
+	first, _, rest = text.partition("\n")
+	if first.lower().startswith("subject:"):
+		return {"subject": first.split(":", 1)[1].strip(), "body": rest.strip()}
+	return {"subject": f"Reconciliation between {facts['from']} and {facts['to']}", "body": text}
 
 
 def _history_block(turns) -> str:

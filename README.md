@@ -223,8 +223,20 @@ Questions in plain language about the reconciliation, such as "which payments ar
 **The AI model comes from the [AI Interface](https://github.com/sagarrgarg/ai-interface) app.** Its provider, model, budget, rate limit and call log apply, and its AI Call Log shows every call under the app `accounts_intelligence`. AI Interface is needed for the assistant only: without it, or without a default provider in **AI Settings**, the panel says what is missing and the rest of the app works as before.
 
 A question costs at most two calls:
-1. **Plan.** The model picks one tool and its arguments: a group summary, one pair's summary, open items (by company, type, status, recorded by, period, age, amount), or a document by its number, bill or bank reference.
-2. **Answer.** `assistant.py` runs that tool on the reconciled data, then the model words the answer from the result only.
+1. **Plan.** The model picks one tool and its arguments:
+   - a group summary, or one pair's summary;
+   - open items, by company, type, status, recorded by, period, age or amount;
+   - a document, by its number, bill or bank reference;
+   - an email draft from one company's accounts team to another's;
+   - related-party transactions for a company and period.
+2. **Answer.** `assistant.py` runs that tool on the reconciled data, then the model words the answer from the result only. Lines carry their review, so an answer can say that a line is already explained.
+
+**Email drafts.** "Draft an email to GGSPL" lists three things:
+- the documents only in our books, which they have to book;
+- the documents whose amount or date differs;
+- the documents only in their books, which we will book.
+
+Each list item gives the document number, date and amount, with both balances above the lists. Lines already explained are left out. The draft is shown with **Copy** and **Open in email**, and is never sent from the app: the person chooses the recipients and can change the text in their own email. Under any answer about one pair, **Draft email to …** asks for one in a click.
 
 **What keeps it safe.**
 - The model never writes a query, and sees nothing but the tool's result.
@@ -368,7 +380,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 120 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 124 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;

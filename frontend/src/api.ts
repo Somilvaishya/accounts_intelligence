@@ -133,11 +133,17 @@ export interface FoundLine extends Line {
   status_label: string;
 }
 
+export interface Draft {
+  subject: string;
+  body: string;
+}
+
 export interface Answer {
   ok: boolean;
   answer: string;
   tool?: string;
   lines?: FoundLine[];
+  draft?: Draft;
 }
 
 async function call<T>(method: string, params: Record<string, string | undefined>, post = false): Promise<T> {

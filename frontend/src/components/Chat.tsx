@@ -2,7 +2,7 @@
 // each answer shows the lines it used, linked to their documents, so its figures can be checked.
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ask, getAssistantStatus, useLoad, type FoundLine } from "../api";
+import { ask, getAssistantStatus, useLoad, type Draft, type FoundLine } from "../api";
 import { STATUS_STYLE, acronym, date, docUrl, money } from "../format";
 import Icon from "./Icon";
 
@@ -11,6 +11,7 @@ interface Message {
   text: string;
   ok?: boolean;
   lines?: FoundLine[];
+  draft?: Draft;
 }
 
 const SUGGESTIONS = [
@@ -71,7 +72,10 @@ export default function Chat({ onClose, pending, onPendingSent }: {
     setBusy(true);
     try {
       const result = await ask(question, history.slice(-TURNS));
-      setMessages((list) => [...list, { role: "assistant", text: result.answer, ok: result.ok, lines: result.lines }]);
+      setMessages((list) => [
+        ...list,
+        { role: "assistant", text: result.answer, ok: result.ok, lines: result.lines, draft: result.draft },
+      ]);
     } catch (e) {
       setMessages((list) => [...list, { role: "assistant", text: (e as Error).message, ok: false }]);
     } finally {
@@ -147,7 +151,8 @@ export default function Chat({ onClose, pending, onPendingSent }: {
               <div className={`text-sm leading-relaxed ${m.ok === false ? "text-rose-700 dark:text-rose-400" : ""}`}>
                 <Rich text={m.text} />
               </div>
-              {!!m.lines?.length && <Found lines={m.lines} />}
+              {m.draft && <DraftCard draft={m.draft} />}
+              {!!m.lines?.length && <Found lines={m.lines} onAsk={send} drafted={!!m.draft} />}
             </div>
           ),
         )}
@@ -200,11 +205,41 @@ function bold(text: string): ReactNode[] {
   return text.split(/\*\*(.+?)\*\*/g).map((part, i) => (i % 2 ? <strong key={i}>{part}</strong> : part));
 }
 
+/** An email the assistant drafted. It is never sent from here: the person copies it or opens it in their
+ * own email, where they choose the recipients and can change it. */
+function DraftCard({ draft }: { draft: Draft }) {
+  const [copied, setCopied] = useState(false);
+  const text = `Subject: ${draft.subject}\n\n${draft.body}`;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard blocked: the text can still be selected by hand.
+    }
+  };
+  const mailto = `mailto:?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`;
+  return (
+    <div className="overflow-hidden rounded-lg border border-line">
+      <div className="border-b border-line bg-sunken/70 px-3 py-2 text-xs">
+        <span className="caps">Subject</span> <span className="font-medium">{draft.subject}</span>
+      </div>
+      <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap px-3 py-2 font-sans text-xs leading-relaxed">{draft.body}</pre>
+      <div className="flex gap-2 border-t border-line px-3 py-2">
+        <button className="btn h-7 text-xs" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+        <a className="btn h-7 text-xs" href={mailto}>Open in email</a>
+      </div>
+    </div>
+  );
+}
+
 /** The lines an answer used, linked to their documents, and to the pair when they all share one. */
-function Found({ lines }: { lines: FoundLine[] }) {
+function Found({ lines, onAsk, drafted }: { lines: FoundLine[]; onAsk: (question: string) => void; drafted: boolean }) {
   const pairs = new Set(lines.map((l) => `${l.pair.a.pan}/${l.pair.b.pan}`));
   const only = pairs.size === 1 ? lines[0].pair : null;
   return (
+    <>
     <div className="overflow-hidden rounded-lg border border-line">
       <div className="caps flex items-center justify-between bg-sunken/70 px-2.5 py-1.5">
         <span>{lines.length === 1 ? "1 line" : `${lines.length} lines`}</span>
@@ -243,5 +278,16 @@ function Found({ lines }: { lines: FoundLine[] }) {
         })}
       </div>
     </div>
+    {only && !drafted && (
+      <div className="flex flex-wrap gap-1.5">
+        {[[only.a, only.b], [only.b, only.a]].map(([from, to]) => (
+          <button key={to.pan} onClick={() => onAsk(`Draft an email from ${acronym(from.name)} to ${acronym(to.name)} about these differences`)}
+            className="rounded-full border border-line px-2.5 py-1 text-xs text-ink-2 hover:border-accent hover:text-accent">
+            Draft email to {acronym(to.name)}
+          </button>
+        ))}
+      </div>
+    )}
+    </>
   );
 }
