@@ -136,13 +136,25 @@ class TestReconcile(FrappeTestCase):
 			"balances cover all of history, so a period cannot explain them",
 		)
 
-	def test_overview_lists_each_pair_once(self):
+	def test_dashboard_lists_each_pair_once_with_chart_data(self):
 		_add(A, "Sales Invoice", "SI-1", "2026-10-01", 100)
 		_add(B, "Purchase Invoice", "PI-1", "2026-10-01", 100, bill_no="SI-1")
-		pairs = reconcile.overview()
+		_add(A, "Sales Invoice", "SI-OLD", "2025-01-15", 250)
+		data = reconcile.dashboard()
+		pairs = data["pairs"]
 		self.assertEqual(len(pairs), 1)
 		self.assertEqual((pairs[0]["a"]["name"], pairs[0]["b"]["name"]), ("Alpha Ltd", "Beta Ltd"))
 		self.assertEqual(pairs[0]["summary"]["invoice"]["matched"], 1)
+		self.assertEqual(
+			data["months"],
+			[
+				{"month": "2025-01", "matched": 0, "differs": 0, "missing": 1},
+				{"month": "2026-10", "matched": 1, "differs": 0, "missing": 0},
+			],
+		)
+		self.assertEqual(data["ageing"][-1], {"bucket": "Over 180 days", "count": 1, "amount": 250})
+		self.assertEqual(sum(b["count"] for b in data["ageing"]), 1, "only open lines have an age")
+		self.assertIn("sites", data["sync"])
 
 	def test_only_a_system_manager_can_read_it(self):
 		self.assertRaises(frappe.ValidationError, reconcile.pair, A, A)
@@ -151,7 +163,7 @@ class TestReconcile(FrappeTestCase):
 		frappe.set_user("Guest")
 		try:
 			self.assertRaises(frappe.PermissionError, reconcile.pair, A, B)
-			self.assertRaises(frappe.PermissionError, reconcile.overview)
+			self.assertRaises(frappe.PermissionError, reconcile.dashboard)
 		finally:
 			frappe.set_user("Administrator")
 			frappe.flags.in_test = in_test

@@ -135,10 +135,11 @@ Each line is **Matched**, **Amount differs**, **Date differs**, or **Only at** o
 Over the whole history, the open lines should explain the balance difference. What they do not explain is shown as **Unexplained**: documents older than the sync start date, or entries booked against a party that has no PAN.
 
 **The frontend.** On the server, open `/intelligence` (System Manager only).
-- **Overview:** every pair of companies with matched and open counts, the balance difference and the unexplained amount.
-- **Pair page:** both companies' balances, then every line side by side, filtered by status, type, period or text, with a CSV download. Each document links to the company site that holds it.
+- **Dashboard:** the total balance gap, open items, match rate and unexplained amount; charts of the gap per company pair, lines per month, open items by age and the group as a network; then every pair with its matched and open counts. The sidebar lists the pairs and shows how the company sites are syncing.
+- **Pair page:** both companies' balances, what makes up the difference, open items by age, then every line side by side, filtered by status, type, period or text, with a CSV download. Each document links to the company site that holds it.
+- Light and dark themes. A panel for the assistant is in place; the assistant itself is the next step.
 
-It reads two endpoints, `accounts_intelligence.reconcile.overview` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
+It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
 
 ## Installation
 

@@ -15,20 +15,32 @@ Cancelled documents are left out.
 from datetime import date
 
 import frappe
-from frappe.utils import getdate
+from frappe.utils import add_to_date, getdate, now_datetime
 
-from accounts_intelligence.sync import BALANCE, ENTITY, TRANSACTION
+from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS
+from accounts_intelligence.sync import BALANCE, DEFAULT_SYNC_EVERY, ENTITY, SYNC_EVERY, TRANSACTION
 
 # Rupees. The two books round taxes differently, so the same invoice can differ by a few paise.
 TOLERANCE = 1.0
 # A bank transfer can be booked a few days apart on the two sides.
 PAYMENT_DAYS = 3
 STATUSES = ("matched", "amount_differs", "date_differs", "only_a", "only_b")
+# How each status counts in the charts.
+OUTCOME = {
+	"matched": "matched",
+	"amount_differs": "differs",
+	"date_differs": "differs",
+	"only_a": "missing",
+	"only_b": "missing",
+}
+# Age of an open line in days: the upper limit of each bucket, the last one open-ended.
+AGEING = ((30, "0-30 days"), (90, "31-90 days"), (180, "91-180 days"), (None, "Over 180 days"))
 
 
 @frappe.whitelist(methods=["GET"])
-def overview(from_date=None, to_date=None) -> list:
-	"""Every pair of group companies with data, and how far their books agree."""
+def dashboard(from_date=None, to_date=None) -> dict:
+	"""Every pair of group companies with data and how far their books agree, the group's lines per month
+	and open lines by age, and how the company sites are syncing."""
 	frappe.only_for("System Manager")
 	pairs = frappe.db.sql(
 		f"""select distinct least(entity, counterparty) as a, greatest(entity, counterparty) as b
@@ -38,11 +50,42 @@ def overview(from_date=None, to_date=None) -> list:
 		order by a, b""",
 		as_dict=True,
 	)
-	result = []
+	result, months, ageing = [], {}, [{"bucket": label, "count": 0, "amount": 0.0} for _, label in AGEING]
 	for pair_row in pairs:
 		data = reconcile(pair_row.a, pair_row.b, from_date, to_date)
 		result.append({"a": data["a"], "b": data["b"], "summary": data["summary"]})
-	return result
+		for month in data["trend"]["months"]:
+			key = month["month"]
+			total = months.setdefault(key, {"month": key, "matched": 0, "differs": 0, "missing": 0})
+			for outcome in ("matched", "differs", "missing"):
+				total[outcome] += month[outcome]
+		for total, bucket in zip(ageing, data["trend"]["ageing"], strict=True):
+			total["count"] += bucket["count"]
+			total["amount"] = round(total["amount"] + bucket["amount"], 2)
+	return {
+		"pairs": result,
+		"months": [months[key] for key in sorted(months)],
+		"ageing": ageing,
+		"sync": _sync_health(),
+	}
+
+
+def _sync_health() -> dict:
+	"""Active company sites, those that have not synced for twice the interval, and the latest sync."""
+	every = SYNC_EVERY.get(frappe.db.get_single_value(SETTINGS, "sync_every"), DEFAULT_SYNC_EVERY)
+	sites = frappe.db.get_all(
+		ALLOWED_SITE,
+		{"parent": SETTINGS, "enabled": 1, "status": "Active"},
+		["site_url", "last_sync_on"],
+	)
+	cutoff = add_to_date(now_datetime(), minutes=-2 * every)
+	synced = [s.last_sync_on for s in sites if s.last_sync_on]
+	return {
+		"sites": len(sites),
+		"late": [s.site_url for s in sites if s.last_sync_on and s.last_sync_on < cutoff],
+		"last_sync_on": str(max(synced)) if synced else None,
+		"sync_every": every,
+	}
 
 
 @frappe.whitelist(methods=["GET"])
@@ -86,8 +129,28 @@ def reconcile(a, b, from_date=None, to_date=None) -> dict:
 		"to_date": to_date,
 		"summary": _summary(lines, balance, whole_history=not from_date and not to_date),
 		"balance": balance,
+		"trend": _trend(lines),
 		"lines": lines,
 	}
+
+
+def _trend(lines) -> dict:
+	"""For the charts: lines per month by outcome, and open lines by age with their total difference."""
+	months = {}
+	ageing = [{"bucket": label, "count": 0, "amount": 0.0} for _, label in AGEING]
+	today = getdate()
+	for line in lines:
+		key = line["date"][:7]
+		month = months.setdefault(key, {"month": key, "matched": 0, "differs": 0, "missing": 0})
+		month[OUTCOME[line["status"]]] += 1
+		if line["status"] != "matched":
+			age = (today - getdate(line["date"])).days
+			bucket = next(
+				b for (limit, _), b in zip(AGEING, ageing, strict=True) if limit is None or age <= limit
+			)
+			bucket["count"] += 1
+			bucket["amount"] = round(bucket["amount"] + abs(line["difference"]), 2)
+	return {"months": [months[key] for key in sorted(months)], "ageing": ageing}
 
 
 def _rows(a, b, from_date, to_date) -> list:

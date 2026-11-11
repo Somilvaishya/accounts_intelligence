@@ -45,18 +45,49 @@ export interface Balance {
   as_of: string | null;
 }
 
+export interface Month {
+  month: string;
+  matched: number;
+  differs: number;
+  missing: number;
+}
+
+export interface AgeBucket {
+  bucket: string;
+  count: number;
+  amount: number;
+}
+
+export interface Trend {
+  months: Month[];
+  ageing: AgeBucket[];
+}
+
 export interface PairResult {
   a: Company;
   b: Company;
   summary: Summary;
   balance: Balance;
+  trend: Trend;
   lines: Line[];
 }
 
-export interface OverviewRow {
+export interface PairRow {
   a: Company;
   b: Company;
   summary: Summary;
+}
+
+export interface SyncHealth {
+  sites: number;
+  late: string[];
+  last_sync_on: string | null;
+  sync_every: number;
+}
+
+export interface Dashboard extends Trend {
+  pairs: PairRow[];
+  sync: SyncHealth;
 }
 
 export interface Period {
@@ -88,7 +119,7 @@ function serverMessage(body: { _server_messages?: string; exception?: string }):
   return body.exception?.split(":").slice(1).join(":").trim() || "";
 }
 
-export const getOverview = (period: Period) => call<OverviewRow[]>("overview", { ...period });
+export const getDashboard = (period: Period) => call<Dashboard>("dashboard", { ...period });
 export const getPair = (a: string, b: string, period: Period) => call<PairResult>("pair", { a, b, ...period });
 
 /** Load data whenever `key` changes, dropping the answer to a request that has been superseded. */
