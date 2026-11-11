@@ -25,11 +25,11 @@
   },
   {
    "fieldname": "counterparty",
-   "fieldtype": "Link",
+   "description": "The PAN of the group company or related party on the other side.",
+   "fieldtype": "Data",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Counterparty",
-   "options": "Accounts Intelligence Entity",
+   "label": "Counterparty PAN",
    "read_only": 1
   },
   {
@@ -63,7 +63,7 @@
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-11-05 10:00:00.000000",
+ "modified": "2026-11-12 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Balance",

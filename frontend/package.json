@@ -1,0 +1,28 @@
+{
+  "name": "accounts-intelligence-frontend",
+  "private": true,
+  "license": "MIT",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build --base=/assets/accounts_intelligence/frontend/ && yarn copy-html-entry",
+    "copy-html-entry": "cp ../accounts_intelligence/public/frontend/index.html ../accounts_intelligence/www/intelligence.html",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.41",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.3.3",
+    "vite": "^6.3.6"
+  }
+}

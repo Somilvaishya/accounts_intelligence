@@ -1,6 +1,6 @@
 """Client side of data sync: send the headers of documents with other group companies to the server.
 
-A run fetches the watch list (every group company's PAN) at most hourly, then, for each source doctype,
+A run fetches the watch list (every group company's PAN) and the sync rules, then, for each source doctype,
 sends the documents changed since its watermark whose party is a group company, then the party balances
 that changed. A watermark only moves after the server's signed reply accepts the batch, so a failed run
 sends the same rows again next time, which the server's upsert makes harmless. Nothing is queued or
@@ -26,7 +26,7 @@ from accounts_intelligence.sync import (
 	pan_of,
 )
 
-CONFIG_EVERY = 3600
+MAX_RESULT = 1000
 # Scheduled jobs on the default queue time out at 300 seconds; a run stops sending well before that.
 TIME_BUDGET = 120
 JOURNAL_LIMIT = MAX_ROWS // 5
@@ -82,14 +82,14 @@ def _settings():
 def _run(settings, deadline) -> str:
 	state = _load_state(settings.sync_state)
 	sent = {"transactions": 0, "balances": 0}
-	notes = []
 	try:
-		if time.time() - state.get("config_at", 0) > CONFIG_EVERY:
-			notes += _refresh_config(settings, state)
-		else:
-			notes += state.get("notes", [])
+		# Fetched every run, so a company that joins the group is picked up on the next run.
+		notes = _refresh_config(settings, state)
 		companies = state.get("companies", {})
-		parties = watched_parties(set(state.get("watch", [])))
+		# A party with this site's own PAN is the company itself under another GSTIN, not a group company.
+		watch = set(state.get("watch", [])) - set(companies.values())
+		parties = watched_parties(watch)
+		notes += unmatched_names(state.get("names", {}), watch, parties)
 		if companies and parties:
 			for doctype in SOURCES:
 				more = True
@@ -126,7 +126,13 @@ def _run(settings, deadline) -> str:
 def _refresh_config(settings, state) -> list:
 	companies, notes = own_companies()
 	reply = transport.post_signed(
-		settings, "sync_config", {"companies": [{"company": c, "pan": p} for c, p in companies.items()]}
+		settings,
+		"sync_config",
+		{
+			"companies": [{"company": c, "pan": p} for c, p in companies.items()],
+			# The previous run's result, so the server's Sync Health page shows this site's warnings.
+			"last_result": (settings.last_sync_result or "")[:MAX_RESULT],
+		},
 	)
 	_check_reply(settings, reply)
 	accepted = set(reply.get("entities") or [])
@@ -144,52 +150,105 @@ def _refresh_config(settings, state) -> list:
 		state.update(version=version, watermarks={}, balances={})
 	state.update(
 		watch=reply.get("watch") or [],
+		names=reply.get("names") or {},
 		companies=companies,
 		sync_from=sync_from,
 		sync_every=int(reply.get("sync_every") or DEFAULT_SYNC_EVERY),
 		resync=resync,
-		config_at=time.time(),
-		notes=notes,
 	)
 	return notes
 
 
 def own_companies() -> tuple[dict, list]:
-	"""This site's companies mapped to their PAN, and a note for each company without one."""
-	fields = ["name", *_tax_fields("Company")]
-	companies, notes = {}, []
-	for company in frappe.get_all("Company", fields=fields):
-		pan = pan_of(*(company.get(f) for f in TAX_ID_FIELDS))
-		if pan:
-			companies[company.name] = pan
-		else:
-			notes.append(f"{company.name}: no PAN or GSTIN, so it is not synced")
-	return companies, notes
+	"""The company this site represents, mapped to its PAN, and a note when it cannot be sent.
+
+	A site represents one company: the Default Company in Global Defaults, or the only company there is.
+	Other companies on the site, such as ERPNext's test companies, are never sent."""
+	company = frappe.defaults.get_global_default("company")
+	if not company:
+		names = frappe.get_all("Company", pluck="name")
+		if len(names) != 1:
+			return {}, ["set the Default Company in Global Defaults: this site has several companies"]
+		company = names[0]
+	row = frappe.db.get_value("Company", company, _tax_fields("Company") or ["name"], as_dict=True) or {}
+	pan = pan_of(*(row.get(f) for f in TAX_ID_FIELDS))
+	if not pan:
+		return {}, [f"{company}: no PAN or GSTIN, so it is not synced"]
+	return {company: pan}, []
 
 
 def watched_parties(watch: set) -> dict:
-	"""Customers and suppliers that are group companies, as {(party_type, party): (pan, party_name)}."""
+	"""Customers and suppliers that are group companies, as {(party_type, party): (pan, party_name)}.
+
+	The PAN comes from the party's pan, gstin or tax_id, or else from the GSTIN on one of its addresses."""
 	if not watch:
 		return {}
 	result = {}
 	for party_type in PARTY_TYPES:
 		fields = _tax_fields(party_type)
-		if not fields:
-			continue
-		conditions = " or ".join(
-			f"upper(`{f}`) in %(watch)s or substr(upper(`{f}`), 3, 10) in %(watch)s" for f in fields
-		)
-		rows = frappe.db.sql(
-			f"""select name, `{PARTY_NAME[party_type]}` as party_name, {", ".join(f"`{f}`" for f in fields)}
-			from `tab{party_type}` where {conditions}""",
-			{"watch": tuple(watch)},
+		if fields:
+			conditions = " or ".join(
+				f"upper(`{f}`) in %(watch)s or substr(upper(`{f}`), 3, 10) in %(watch)s" for f in fields
+			)
+			rows = frappe.db.sql(
+				f"""select name, `{PARTY_NAME[party_type]}` as party_name, {", ".join(f"`{f}`" for f in fields)}
+				from `tab{party_type}` where {conditions}""",
+				{"watch": tuple(watch)},
+				as_dict=True,
+			)
+			for row in rows:
+				pan = pan_of(*(row.get(f) for f in TAX_ID_FIELDS))
+				if pan in watch:
+					result[(party_type, row.name)] = (pan, row.party_name or row.name)
+	if frappe.get_meta("Address").has_field("gstin"):
+		for row in frappe.db.sql(
+			"""select l.link_doctype as party_type, l.link_name as party, a.gstin
+			from `tabAddress` a
+			join `tabDynamic Link` l on l.parent = a.name and l.parenttype = 'Address'
+			where l.link_doctype in %(party_types)s and substr(upper(a.gstin), 3, 10) in %(watch)s""",
+			{"party_types": PARTY_TYPES, "watch": tuple(watch)},
 			as_dict=True,
-		)
-		for row in rows:
-			pan = pan_of(*(row.get(f) for f in TAX_ID_FIELDS))
-			if pan in watch:
-				result[(party_type, row.name)] = (pan, row.party_name or row.name)
+		):
+			key = (row.party_type, row.party)
+			if key not in result:
+				name = frappe.db.get_value(row.party_type, row.party, PARTY_NAME[row.party_type])
+				result[key] = (pan_of(row.gstin), name or row.party)
 	return result
+
+
+SUFFIXES = re.compile(r"\b(m s|private|pvt|limited|ltd|llp|co|company|corporation)\b")
+
+
+def _core_name(name) -> str:
+	"""A company name without punctuation and legal suffixes: "M/S Garg Global Pvt. Ltd." -> "garg global"."""
+	words = re.sub(r"[^a-z0-9]+", " ", str(name or "").lower())
+	return " ".join(SUFFIXES.sub(" ", words).split())
+
+
+def unmatched_names(names: dict, watch: set, parties: dict) -> list:
+	"""Warn about customers and suppliers named like a group company or related party whose PAN or GSTIN
+	does not match.
+
+	Names are never used to send documents, since they are not unique. This only shows what is missed."""
+	found = set(parties)
+	notes = []
+	for pan, company in names.items():
+		core = _core_name(company)
+		if pan not in watch or not core:
+			continue
+		first = core.split()[0]
+		for party_type in PARTY_TYPES:
+			for row in frappe.get_all(
+				party_type,
+				filters={PARTY_NAME[party_type]: ["like", f"%{first}%"]},
+				fields=["name", f"{PARTY_NAME[party_type]} as party_name"],
+			):
+				if (party_type, row.name) not in found and _core_name(row.party_name) == core:
+					notes.append(
+						f"{party_type} {row.name} is named like {company}, which the group server watches, "
+						"but has no matching PAN or GSTIN, so its documents are not sent"
+					)
+	return notes
 
 
 def _tax_fields(doctype) -> list:

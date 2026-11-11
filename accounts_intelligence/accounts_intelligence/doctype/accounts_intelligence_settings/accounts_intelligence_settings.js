@@ -154,7 +154,7 @@ function act(frm, method, label) {
 		server_approve: __("Approve only if each fingerprint matches the one shown on that site's settings page."),
 		server_revoke: __("Revoked sites are refused at once. To let one back in, reset it and approve it again."),
 		server_reset: __("The site's key is forgotten. It must connect and be approved again."),
-		server_resync: __("Within an hour, each site sends all its documents again. Nothing stored here is deleted."),
+		server_resync: __("On its next sync, each site sends all its documents again. Nothing stored here is deleted."),
 	};
 	const args = { rows: rows.map((r) => r.name) };
 	if (method === "server_approve") {

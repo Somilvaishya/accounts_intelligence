@@ -21,6 +21,7 @@ from accounts_intelligence.sync import (
 	ENTITY,
 	MAX_ROWS,
 	PARTY_TYPES,
+	RELATED_PARTY,
 	SOURCES,
 	SYNC_EVERY,
 	TRANSACTION,
@@ -37,7 +38,8 @@ PAYMENT_TYPES = ("", "Pay", "Receive")
 
 
 def config_handler(request) -> dict:
-	"""Register the client's companies and return the watch list: the PAN of every group company."""
+	"""Register the client's companies and return the watch list: the PAN of every group company, and of
+	every party in the related-party register that is related to this site's company."""
 	site = request.row.site_url
 	companies = request.data.get("companies")
 	if not isinstance(companies, list) or len(companies) > MAX_COMPANIES:
@@ -67,15 +69,33 @@ def config_handler(request) -> dict:
 	if refused:
 		reasons = "; ".join(f"{r['company'] or '?'}: {r['reason']}" for r in refused)
 		audit.log("Sync config", "Rejected", site_url=site, reason=f"companies refused: {reasons}")
-	watch = sorted(known)
+	related = related_parties({pan for pan, e in known.items() if e.site_url == site})
+	watch = sorted(set(known) | set(related))
 	rules = site_rules(request.row.name)
+	# Every client run starts here, even when it has nothing to send, so this is when the site last synced.
+	values = {"last_sync_on": now_datetime()}
+	if isinstance(request.data.get("last_result"), str):
+		values["last_result"] = request.data["last_result"][:1000]
+	frappe.db.set_value(ALLOWED_SITE, request.row.name, values, update_modified=False)
 	return {
 		"ok": True,
 		"entities": accepted,
 		"refused": refused,
 		"watch": watch,
+		# Names only let a client warn about a party named like one of these without a matching PAN.
+		"names": {pan: known[pan].company_name for pan in known} | related,
 		"version": hashlib.sha256(",".join(watch).encode()).hexdigest()[:16],
 		**rules,
+	}
+
+
+def related_parties(own) -> dict:
+	"""PAN → name of the registered related parties of the companies `own`: those related to every group
+	company, and those related to one of `own`."""
+	return {
+		r.name: r.party_name
+		for r in frappe.get_all(RELATED_PARTY, fields=["name", "party_name", "related_to"])
+		if not r.related_to or r.related_to in own
 	}
 
 
@@ -100,15 +120,19 @@ def sync_handler(request) -> dict:
 	transactions = _batch(request.data.get("transactions"))
 	balances = _batch(request.data.get("balances"))
 	own = set(frappe.get_all(ENTITY, {"site_url": site}, pluck="name"))
-	group = set(frappe.get_all(ENTITY, pluck="name"))
+	# The parties this site may send documents with: the group companies and its related parties.
+	counterparties = set(frappe.get_all(ENTITY, pluck="name")) | set(related_parties(own))
 
 	skipped = []
-	transaction_rows = _clean(transactions, _transaction, own, group, skipped)
-	balance_rows = _clean(balances, _balance, own, group, skipped)
+	transaction_rows = _clean(transactions, _transaction, own, counterparties, skipped)
+	balance_rows = _clean(balances, _balance, own, counterparties, skipped)
 	_upsert(TRANSACTION, transaction_rows, version="source_modified")
 	_upsert(BALANCE, balance_rows)
 
-	values = {"last_sync_on": now_datetime(), "last_sync_rows": len(transaction_rows) + len(balance_rows)}
+	values = {"last_sync_on": now_datetime()}
+	if transaction_rows or balance_rows:
+		# The daily check arrives without rows; it must not hide the size of the last real batch.
+		values["last_sync_rows"] = len(transaction_rows) + len(balance_rows)
 	reply = {
 		"ok": True,
 		"transactions": len(transaction_rows),
@@ -173,7 +197,7 @@ def _batch(rows) -> list:
 	return rows
 
 
-def _clean(rows, cleaner, own, group, skipped) -> list:
+def _clean(rows, cleaner, own, counterparties, skipped) -> list:
 	"""Validate each row. A bad row is skipped and reported back; it never fails the whole batch."""
 	result = {}
 	for row in rows:
@@ -183,8 +207,10 @@ def _clean(rows, cleaner, own, group, skipped) -> list:
 			values = cleaner(row)
 			if values["entity"] not in own:
 				raise ValueError("company is not registered to this site")
-			if values["counterparty"] not in group:
-				raise ValueError("counterparty is not a group company")
+			if values["counterparty"] not in counterparties:
+				raise ValueError("counterparty is not a group company or a related party of this company")
+			if values["counterparty"] == values["entity"]:
+				raise ValueError("a company cannot be its own counterparty")
 		except (KeyError, TypeError, ValueError) as e:
 			skipped.append({"row": _label(row), "reason": str(e)[:140]})
 			continue

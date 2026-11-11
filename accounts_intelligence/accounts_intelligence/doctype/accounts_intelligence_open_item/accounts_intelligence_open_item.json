@@ -1,0 +1,131 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-11-12 12:00:00.000000",
+ "description": "The review of one open reconciliation line: who looks into it and how it was explained. Created from the Open Items page; lines nobody has touched have no entry.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "assigned_to",
+  "reason",
+  "note",
+  "column_break_line",
+  "pair_a",
+  "pair_b",
+  "kind",
+  "line_date",
+  "documents",
+  "difference",
+  "reviewed_by",
+  "reviewed_on"
+ ],
+ "fields": [
+  {
+   "default": "Open",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Open\nIn progress\nExplained",
+   "reqd": 1
+  },
+  {
+   "fieldname": "assigned_to",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Assigned To",
+   "options": "User"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Select",
+   "label": "Reason",
+   "options": "\nTiming difference\nBooked under another party\nWill be booked\nDisputed\nNot an inter-company transaction\nOther"
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  },
+  {
+   "fieldname": "column_break_line",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pair_a",
+   "fieldtype": "Data",
+   "label": "Company A PAN",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pair_b",
+   "fieldtype": "Data",
+   "label": "Company B PAN",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Type",
+   "options": "Invoice\nMoney",
+   "read_only": 1
+  },
+  {
+   "fieldname": "line_date",
+   "fieldtype": "Date",
+   "label": "Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "documents",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Documents",
+   "read_only": 1
+  },
+  {
+   "fieldname": "difference",
+   "fieldtype": "Currency",
+   "label": "Difference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed On",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "links": [],
+ "modified": "2026-11-12 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounts Intelligence",
+ "name": "Accounts Intelligence Open Item",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "documents",
+ "track_changes": 1
+}

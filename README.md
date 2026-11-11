@@ -12,11 +12,14 @@ Works on **Frappe / ERPNext v15 and v16**, and runs on Frappe Cloud with no infr
 |---|---|
 | Site-to-site authentication and settings | **Built and tested** |
 | Sending accounting data from clients to the server | **Built and tested** |
-| Related party and inter-company matching | Planned |
-| Findings dashboard for the finance head | Planned |
-| Chat over the group's data, limited to each user's permissions | Planned |
+| Inter-company reconciliation: invoices, payments and balances | **Built and tested** |
+| Reconciliation frontend at `/intelligence` on the server | **Built** |
+| Related-party transactions (RPT) report and register | **Built and tested** |
+| Open items work queue: assign, explain, ask AI | **Built and tested** |
+| Sync health: site states, warnings and activity | **Built and tested** |
+| Assistant: questions about the reconciliation, using the AI Interface app | **Built and tested** |
 
-The rest of this README describes what is built today: the trust layer every later part relies on, and the data sync that runs over it.
+The rest of this README describes what is built today: the trust layer every later part relies on, the data sync that runs over it, and the reconciliation that reads the synced data.
 
 ## How authentication works
 
@@ -97,10 +100,12 @@ Each client sends the **headers** of its documents with **other group companies*
 | Data | Fields |
 |---|---|
 | Sales Invoice, Purchase Invoice, Payment Entry (submitted or cancelled) | company, document, posting date, party, PAN of the counterparty, grand total, net total, tax, currency, total in company currency, return and cancelled flags, supplier invoice no, payment type, reference no |
-| Journal Entry | one row per entry and group-company party, with the net amount in company currency |
-| Balance with each group company | sent only on the days it changes |
+| Journal Entry | one row per entry and watched party, with the net amount in company currency |
+| Balance with each group company and related party | sent only on the days it changes |
 
-**How group companies are found.** Each company is identified by its PAN, which every one of its GSTINs contains. On its first sync a client registers its companies with the server. The server answers with the **watch list**: the PAN of every group company. The client then sends only documents whose customer or supplier has one of those PANs, read from the party's `pan`, `gstin` (India Compliance) or `tax_id` field.
+**How group companies are found.** Each company is identified by its PAN, which every one of its GSTINs contains. A site represents one company: the **Default Company** in Global Defaults, or the only company on the site. On every run the client registers that company with the server, and the server answers with the **watch list**: the PAN of every group company, and of every party in the related-party register that is related to this company. The client then sends only documents whose customer or supplier has one of those PANs, read from the party's `pan`, `gstin` (India Compliance) or `tax_id` field, or from the GSTIN on one of its addresses.
+- A party with the site's own PAN is the company itself under another GSTIN, so its documents are not sent.
+- A party is never matched by name. One named like a group company but without its PAN or GSTIN is listed in **Last Sync Result**, so it can be fixed.
 
 **How it stays correct**
 - Each document type has a watermark (last `modified` and name). It moves only after the server's signed reply accepts the batch. A failed run sends the same rows again, and the server's upsert makes that harmless.
@@ -117,6 +122,130 @@ Each client sends the **headers** of its documents with **other group companies*
 | Sync Documents From on a site row | Overrides the group date for that site, for example a company that joined the group later. |
 
 **Where it is stored on the server:** **Accounts Intelligence Entity** (one row per group company, named by PAN), **Accounts Intelligence Transaction** (one row per document, or per party for a journal entry) and **Accounts Intelligence Balance**. On the client, only the Data Sync section of the settings changes: Last Sync On, Last Sync Result and a hidden state field.
+
+## How reconciliation works
+
+For each pair of group companies, the server compares what each one recorded about the other. It is worked out on request from the synced rows, so nothing extra is stored and nothing goes stale. Cancelled documents are left out.
+
+| Check | How lines are paired |
+|---|---|
+| Invoices | The seller's sales invoice with the buyer's purchase invoice: first by the buyer's **bill number**, which names the seller's invoice in full (`SI090126-0317`) or by its trailing number (`0262`); then, for a purchase invoice without a usable bill number, the one sales invoice of the same date and amount. When more than one fits, nothing is guessed. |
+| Payments and journals | Each document counts as the amount it debits the other company's account. A payment one company makes is a receipt for the other, so a matching pair adds up to zero, within 3 days of each other. A payment can match a journal entry on the other side. A journal entry that nets to zero only moves an amount between the company's own customer and supplier accounts, so it is left out. |
+| Balances | Each company's latest balance with the other. They should add up to zero. |
+
+Each line is **Matched**, **Amount differs**, **Date differs**, or **Only at** one of the two companies. Differences under ₹1 count as matched, because the two books round taxes differently.
+
+Over the whole history, the open lines should explain the balance difference. What they do not explain is shown as **Unexplained**: documents older than the sync start date, or entries booked against a party that has no PAN.
+
+**The frontend.** On the server, open `/intelligence` (System Manager only).
+- **Dashboard:** the total balance gap, open items, match rate and unexplained amount; charts of the gap per company pair, lines per month, open items by age and the group as a network; then every pair with its matched and open counts. The sidebar lists the pairs and shows how the company sites are syncing.
+- **Pair page:** both companies' balances, what makes up the difference, open items by age, then every line side by side, filtered by status, type, period or text, with a CSV download. Each document links to the company site that holds it.
+- Light and dark themes, and the assistant in a side panel.
+
+It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
+
+### Sync health
+
+**Sync health** in the frontend shows every company site on the server's list, on one page.
+
+**Each site's state:**
+- **Healthy**
+- **Late:** no sync for twice the interval
+- **Never synced**
+- **Pending**
+- **Disabled**
+- **Revoked**
+
+**For each site:**
+- its companies and site address
+- the last sync and the size of its last batch
+- the daily check, with an amber flag when months differ
+- a bar per hour for the last 24 hours of accepted sync calls, from the Auth Log
+- refused calls
+- how many of its documents are stored here
+
+**Warnings** come from each site's own **Last Sync Result**. A client sends it with its next config call, and the server keeps it on the site's row. They include:
+- a run that failed;
+- a party named like a group company or related party but without a matching PAN;
+- a daily check that differs.
+
+Each warning clears on the site's next run once it is fixed there.
+
+Endpoint: `accounts_intelligence.health.sites` (GET, System Manager only).
+
+### Open items
+
+**Open items** in the frontend is the work queue for the lines that do not match, across every company pair.
+
+**Filters:** status, company pair, type, age, who it is assigned to, and text.
+
+**Each line shows:**
+- its age in days;
+- both companies' documents, or which side has not recorded it;
+- the amount at stake.
+
+**Actions on a line:**
+- **Assign** it to a System Manager.
+- Mark it **In progress**.
+- **Explain** it with a reason (timing difference, booked under another party, will be booked, disputed, not an inter-company transaction, other) and a note.
+- **Ask AI** about it.
+
+**How reviews are stored.** The lines are still worked out by the reconciliation. Only a review someone saves is stored, in **Accounts Intelligence Open Item**, keyed by the line's pair and documents, with its change history. An explained line still counts as open, because the two books still differ. The pair page shows its review, and the dashboard counts it as explained.
+
+Endpoints: `accounts_intelligence.open_items.items` (GET) and `accounts_intelligence.open_items.review` (POST), System Manager only.
+
+## Related-party transactions
+
+The report for Ind AS 24 and section 188 of the Companies Act: for each group company, what it did with each of its related parties in a period. Open **Related parties** in the frontend, choose the company and period (the financial year to date by default), and download it as CSV.
+
+**Who counts as a related party.**
+- **Other group companies:** always, with no setup.
+- **Everyone else:** an entry in **Accounts Intelligence Related Party** on the server, by PAN (or a GSTIN, from which the PAN is taken). This covers key managerial personnel, their relatives, the firms and companies they control, a holding company and so on.
+  - **Related To:** empty when the party is related to every group company, or one company otherwise.
+  - **Related From / Related Until:** limit the relationship to dates, such as a director's tenure.
+
+The register drives the sync. Each client watches the PANs of its own related parties too, so its documents with a director's firm reach the server like those with a group company. Adding a party makes the clients send its older documents on their next run. A related party has no books here, so it is never part of the reconciliation, which stays between group companies.
+
+**What the report shows** per company and party, in company currency:
+- sales and purchases without tax and net of returns;
+- money received and paid;
+- the net of journal entries;
+- the balance on the period's last day.
+
+Cancelled documents are left out. Transactions outside a party's Related From / Until dates are left out. Remuneration paid through payroll is not synced, so it is not included.
+
+Endpoint: `accounts_intelligence.rpt.report` (GET, System Manager only).
+
+## The assistant
+
+Questions in plain language about the reconciliation, such as "which payments are recorded on one side only?" or "why do GGIL and GGSPL differ?", answered with the lines behind the answer.
+
+**The AI model comes from the [AI Interface](https://github.com/sagarrgarg/ai-interface) app.** Its provider, model, budget, rate limit and call log apply, and its AI Call Log shows every call under the app `accounts_intelligence`. AI Interface is needed for the assistant only: without it, or without a default provider in **AI Settings**, the panel says what is missing and the rest of the app works as before.
+
+A question costs at most two calls:
+1. **Plan.** The model picks one tool and its arguments:
+   - a group summary, or one pair's summary;
+   - open items, by company, type, status, recorded by, period, age or amount;
+   - a document, by its number, bill or bank reference;
+   - an email draft from one company's accounts team to another's;
+   - related-party transactions for a company and period.
+2. **Answer.** `assistant.py` runs that tool on the reconciled data, then the model words the answer from the result only. Lines carry their review, so an answer can say that a line is already explained.
+
+**Email drafts.** "Draft an email to GGSPL" lists three things:
+- the documents only in our books, which they have to book;
+- the documents whose amount or date differs;
+- the documents only in their books, which we will book.
+
+Each list item gives the document number, date and amount, with both balances above the lists. Lines already explained are left out. The draft is shown with **Copy** and **Open in email**, and is never sent from the app: the person chooses the recipients and can change the text in their own email. Under any answer about one pair, **Draft email to …** asks for one in a click.
+
+**What keeps it safe.**
+- The model never writes a query, and sees nothing but the tool's result.
+- Amounts and who owes whom reach the model already worked out, so it does no arithmetic.
+- An unknown tool, company or argument is refused rather than guessed.
+- Only a System Manager can ask, and nothing is written.
+- The conversation is kept in the browser, and the last few turns go back with each question for follow-ups.
+
+Endpoints: `accounts_intelligence.assistant.status` (GET) and `accounts_intelligence.assistant.ask` (POST).
 
 ## Installation
 
@@ -194,7 +323,14 @@ Use two different host names so the browser keeps the two logins apart, and turn
 ```
 accounts_intelligence/
   api.py                  public endpoints: identity, connect, ping, rotate_key, sync_config, sync
+  reconcile.py            invoice, money and balance matching; the frontend's two endpoints
+  assistant.py            the assistant: plan, run one tool, answer (model via AI Interface)
+  rpt.py                  related-party transactions report
+  open_items.py           the open items work queue and its reviews
+  health.py               sync health: each site's state, warnings and activity
   overrides.py            blocks reading the private keys through frappe.client.get_password
+  www/intelligence.py     serves the frontend page (login, System Manager, server mode)
+  public/frontend/        the built frontend, committed so no site needs Node to install the app
   sync/
     client.py             collector, watermarks, daily check, scheduled job
     server.py             watch list, validation, bulk upsert, daily comparison
@@ -213,11 +349,30 @@ accounts_intelligence/
     accounts_intelligence_entity/         server: one row per group company (PAN)
     accounts_intelligence_transaction/    server: synced document headers
     accounts_intelligence_balance/        server: balances with group companies
+    accounts_intelligence_related_party/  server: the related-party register
+    accounts_intelligence_open_item/      server: reviews of open reconciliation lines
   tests/test_auth.py          authentication
   tests/test_key_rotation.py  key rotation and regeneration
   tests/test_hardening.py     security audit fixes
   tests/test_sync.py          data sync
+  tests/test_reconcile.py     reconciliation
+  tests/test_assistant.py     the assistant, with the AI calls replaced
+  tests/test_rpt.py           related-party register, sync and report
+  tests/test_open_items.py    the open items queue and reviews
+  tests/test_health.py        sync health
+frontend/                 React + Vite + Tailwind source of the /intelligence page
 ```
+
+### Changing the frontend
+
+```bash
+cd apps/accounts_intelligence/frontend
+yarn install
+yarn dev     # http://localhost:8081/intelligence, API calls go to the bench on port 8000
+yarn build   # type-checks, writes accounts_intelligence/public/frontend and www/intelligence.html
+```
+
+For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the bench is not on `http://127.0.0.1:8000`. Commit the build output together with the source change.
 
 ## Tests
 
@@ -225,7 +380,7 @@ accounts_intelligence/
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 85 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 124 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
@@ -235,7 +390,8 @@ The 85 tests build real HTTP requests and run them through the verification code
 - the settings guards;
 - key rotation: a successful switch, the old key alone being refused without the site URL, the proof bound to the request, and resuming an interrupted rotation without losing the new key;
 - Regenerate Key on a client and on the server;
-- data sync: only group-company documents are sent, resent batches are stored once, older copies never overwrite newer ones, a failed send keeps the watermark, the start date and interval, the daily check and resync.
+- data sync: only group-company documents are sent, resent batches are stored once, older copies never overwrite newer ones, a failed send keeps the watermark, the start date and interval, the daily check and resync;
+- reconciliation: invoices paired by full or trailing bill number and by date and amount, no guess when several fit, payments paired with payments or journals within 3 days, set-off journals left out, latest balances and the unexplained amount, System Manager only.
 
 They pass on v15 and v16.
 
