@@ -63,12 +63,14 @@ def dashboard(from_date=None, to_date=None) -> dict:
 
 
 def pairs() -> list[tuple[str, str]]:
-	"""Every pair of group companies (PANs) with a synced document or balance, each pair once."""
+	"""Every pair of group companies (PANs) with a synced document or balance, each pair once. A related
+	party keeps no books here to compare with, so it is never half of a pair."""
+	group = f"select name from `tab{ENTITY}`"
 	rows = frappe.db.sql(
 		f"""select distinct least(entity, counterparty), greatest(entity, counterparty)
-		from `tab{TRANSACTION}` where entity != counterparty
+		from `tab{TRANSACTION}` where entity != counterparty and counterparty in ({group})
 		union select distinct least(entity, counterparty), greatest(entity, counterparty)
-		from `tab{BALANCE}` where entity != counterparty
+		from `tab{BALANCE}` where entity != counterparty and counterparty in ({group})
 		order by 1, 2"""
 	)
 	return [(a, b) for a, b in rows]

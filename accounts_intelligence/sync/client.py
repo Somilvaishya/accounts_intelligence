@@ -219,7 +219,8 @@ def _core_name(name) -> str:
 
 
 def unmatched_names(names: dict, watch: set, parties: dict) -> list:
-	"""Warn about customers and suppliers named like a group company whose PAN or GSTIN does not match.
+	"""Warn about customers and suppliers named like a group company or related party whose PAN or GSTIN
+	does not match.
 
 	Names are never used to send documents, since they are not unique. This only shows what is missed."""
 	found = set(parties)
@@ -237,8 +238,8 @@ def unmatched_names(names: dict, watch: set, parties: dict) -> list:
 			):
 				if (party_type, row.name) not in found and _core_name(row.party_name) == core:
 					notes.append(
-						f"{party_type} {row.name} is named like group company {company} but has no matching "
-						"PAN or GSTIN, so its documents are not sent"
+						f"{party_type} {row.name} is named like {company}, which the group server watches, "
+						"but has no matching PAN or GSTIN, so its documents are not sent"
 					)
 	return notes
 

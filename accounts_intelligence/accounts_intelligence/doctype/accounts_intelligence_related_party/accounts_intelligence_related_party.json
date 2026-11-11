@@ -1,0 +1,99 @@
+{
+ "actions": [],
+ "autoname": "field:pan",
+ "creation": "2026-11-12 10:00:00.000000",
+ "description": "A related party that is not a group company with its own site: key managerial personnel, their relatives, and firms or companies they control. Group companies are related to each other already and need no entry here.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "party_name",
+  "pan",
+  "relationship",
+  "column_break_related",
+  "related_to",
+  "related_from",
+  "related_until"
+ ],
+ "fields": [
+  {
+   "fieldname": "party_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Party",
+   "reqd": 1
+  },
+  {
+   "description": "A PAN, or a GSTIN from which the PAN is taken. Documents with any customer or supplier carrying this PAN are synced.",
+   "fieldname": "pan",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "PAN",
+   "reqd": 1,
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "relationship",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Relationship",
+   "options": "Holding company\nSubsidiary\nAssociate\nJoint venture\nKey managerial personnel\nRelative of key managerial personnel\nEntity controlled by key managerial personnel or a relative\nOther related party",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_related",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Empty when the party is related to every group company.",
+   "fieldname": "related_to",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Related To",
+   "options": "Accounts Intelligence Entity"
+  },
+  {
+   "description": "Transactions before this date are not related-party transactions. Empty means always.",
+   "fieldname": "related_from",
+   "fieldtype": "Date",
+   "label": "Related From"
+  },
+  {
+   "description": "For example, the day a director resigned. Empty means still related.",
+   "fieldname": "related_until",
+   "fieldtype": "Date",
+   "label": "Related Until"
+  }
+ ],
+ "links": [],
+ "modified": "2026-11-12 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounts Intelligence",
+ "name": "Accounts Intelligence Related Party",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "party_name",
+ "show_title_field_in_link": 1,
+ "sort_field": "party_name",
+ "sort_order": "ASC",
+ "states": [],
+ "title_field": "party_name",
+ "track_changes": 1
+}

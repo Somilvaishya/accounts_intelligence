@@ -146,7 +146,31 @@ function serverMessage(body: { _server_messages?: string; exception?: string }):
 
 export const getDashboard = (period: Period) => call<Dashboard>("reconcile.dashboard", { ...period });
 export const getPair = (a: string, b: string, period: Period) => call<PairResult>("reconcile.pair", { a, b, ...period });
-export const getAssistantStatus = () => call<{ available: boolean; reason: string | null }>("assistant.status", {});
+export interface RptRow {
+  company: { pan: string; name: string };
+  party: { pan: string; name: string; relationship: string; related_from?: string | null; related_until?: string | null };
+  sales: number;
+  purchases: number;
+  received: number;
+  paid: number;
+  journals: number;
+  documents: number;
+  /** The party's balance on the last day, debit positive: above zero the party owes the company. */
+  balance: number | null;
+}
+
+export interface RptReport {
+  from_date: string;
+  to_date: string;
+  company: string | null;
+  companies: { pan: string; name: string }[];
+  relationships: string[];
+  register_size: number;
+  rows: RptRow[];
+}
+
+export const getRpt = (period: Period, company?: string) => call<RptReport>("rpt.report", { ...period, company });
+export const getAssistantStatus =() => call<{ available: boolean; reason: string | null }>("assistant.status", {});
 export const ask = (question: string, history: { question: string; answer: string }[]) =>
   call<Answer>("assistant.ask", { question, history: JSON.stringify(history) }, true);
 

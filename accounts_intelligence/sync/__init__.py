@@ -12,6 +12,7 @@ from datetime import date
 ENTITY = "Accounts Intelligence Entity"
 TRANSACTION = "Accounts Intelligence Transaction"
 BALANCE = "Accounts Intelligence Balance"
+RELATED_PARTY = "Accounts Intelligence Related Party"
 
 SOURCES = ("Sales Invoice", "Purchase Invoice", "Payment Entry", "Journal Entry")
 PARTY_TYPES = ("Customer", "Supplier")

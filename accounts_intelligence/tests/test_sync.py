@@ -406,7 +406,8 @@ class TestSyncClient(FrappeTestCase):
 		)
 		self.assertEqual(len(notes), 1)
 		self.assertIn(
-			"Customer AI Sync Beta is named like group company Beta Spices Private Limited", notes[0]
+			"Customer AI Sync Beta is named like Beta Spices Private Limited, which the group server watches",
+			notes[0],
 		)
 		self.assertEqual(
 			sync_client.unmatched_names({OTHER_PAN: "Beta Spices Private Limited"}, set(), {}), []

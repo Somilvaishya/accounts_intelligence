@@ -119,6 +119,9 @@ function Sidebar({ dashboard, query, open, onClose }: { dashboard?: Dashboard; q
           <NavLink to={`/${query}`} end className={item} onClick={onClose}>
             <Icon name="grid" /> Dashboard
           </NavLink>
+          <NavLink to={`/related-parties${query}`} className={item} onClick={onClose}>
+            <Icon name="users" /> Related parties
+          </NavLink>
           <a href="/app/accounts-intelligence-settings" className={item({ isActive: false })}>
             <Icon name="settings" /> Settings
           </a>

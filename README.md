@@ -14,6 +14,7 @@ Works on **Frappe / ERPNext v15 and v16**, and runs on Frappe Cloud with no infr
 | Sending accounting data from clients to the server | **Built and tested** |
 | Inter-company reconciliation: invoices, payments and balances | **Built and tested** |
 | Reconciliation frontend at `/intelligence` on the server | **Built** |
+| Related-party transactions (RPT) report and register | **Built and tested** |
 | Assistant: questions about the reconciliation, using the AI Interface app | **Built and tested** |
 
 The rest of this README describes what is built today: the trust layer every later part relies on, the data sync that runs over it, and the reconciliation that reads the synced data.
@@ -97,10 +98,10 @@ Each client sends the **headers** of its documents with **other group companies*
 | Data | Fields |
 |---|---|
 | Sales Invoice, Purchase Invoice, Payment Entry (submitted or cancelled) | company, document, posting date, party, PAN of the counterparty, grand total, net total, tax, currency, total in company currency, return and cancelled flags, supplier invoice no, payment type, reference no |
-| Journal Entry | one row per entry and group-company party, with the net amount in company currency |
-| Balance with each group company | sent only on the days it changes |
+| Journal Entry | one row per entry and watched party, with the net amount in company currency |
+| Balance with each group company and related party | sent only on the days it changes |
 
-**How group companies are found.** Each company is identified by its PAN, which every one of its GSTINs contains. A site represents one company: the **Default Company** in Global Defaults, or the only company on the site. On every run the client registers that company with the server, and the server answers with the **watch list**: the PAN of every group company. The client then sends only documents whose customer or supplier has one of those PANs, read from the party's `pan`, `gstin` (India Compliance) or `tax_id` field, or from the GSTIN on one of its addresses.
+**How group companies are found.** Each company is identified by its PAN, which every one of its GSTINs contains. A site represents one company: the **Default Company** in Global Defaults, or the only company on the site. On every run the client registers that company with the server, and the server answers with the **watch list**: the PAN of every group company, and of every party in the related-party register that is related to this company. The client then sends only documents whose customer or supplier has one of those PANs, read from the party's `pan`, `gstin` (India Compliance) or `tax_id` field, or from the GSTIN on one of its addresses.
 - A party with the site's own PAN is the company itself under another GSTIN, so its documents are not sent.
 - A party is never matched by name. One named like a group company but without its PAN or GSTIN is listed in **Last Sync Result**, so it can be fixed.
 
@@ -140,6 +141,28 @@ Over the whole history, the open lines should explain the balance difference. Wh
 - Light and dark themes, and the assistant in a side panel.
 
 It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
+
+## Related-party transactions
+
+The report for Ind AS 24 and section 188 of the Companies Act: for each group company, what it did with each of its related parties in a period. Open **Related parties** in the frontend, choose the company and period (the financial year to date by default), and download it as CSV.
+
+**Who counts as a related party.**
+- **Other group companies:** always, with no setup.
+- **Everyone else:** an entry in **Accounts Intelligence Related Party** on the server, by PAN (or a GSTIN, from which the PAN is taken). This covers key managerial personnel, their relatives, the firms and companies they control, a holding company and so on.
+  - **Related To:** empty when the party is related to every group company, or one company otherwise.
+  - **Related From / Related Until:** limit the relationship to dates, such as a director's tenure.
+
+The register drives the sync. Each client watches the PANs of its own related parties too, so its documents with a director's firm reach the server like those with a group company. Adding a party makes the clients send its older documents on their next run. A related party has no books here, so it is never part of the reconciliation, which stays between group companies.
+
+**What the report shows** per company and party, in company currency:
+- sales and purchases without tax and net of returns;
+- money received and paid;
+- the net of journal entries;
+- the balance on the period's last day.
+
+Cancelled documents are left out. Transactions outside a party's Related From / Until dates are left out. Remuneration paid through payroll is not synced, so it is not included.
+
+Endpoint: `accounts_intelligence.rpt.report` (GET, System Manager only).
 
 ## The assistant
 
@@ -238,6 +261,7 @@ accounts_intelligence/
   api.py                  public endpoints: identity, connect, ping, rotate_key, sync_config, sync
   reconcile.py            invoice, money and balance matching; the frontend's two endpoints
   assistant.py            the assistant: plan, run one tool, answer (model via AI Interface)
+  rpt.py                  related-party transactions report
   overrides.py            blocks reading the private keys through frappe.client.get_password
   www/intelligence.py     serves the frontend page (login, System Manager, server mode)
   public/frontend/        the built frontend, committed so no site needs Node to install the app
@@ -259,12 +283,14 @@ accounts_intelligence/
     accounts_intelligence_entity/         server: one row per group company (PAN)
     accounts_intelligence_transaction/    server: synced document headers
     accounts_intelligence_balance/        server: balances with group companies
+    accounts_intelligence_related_party/  server: the related-party register
   tests/test_auth.py          authentication
   tests/test_key_rotation.py  key rotation and regeneration
   tests/test_hardening.py     security audit fixes
   tests/test_sync.py          data sync
   tests/test_reconcile.py     reconciliation
   tests/test_assistant.py     the assistant, with the AI calls replaced
+  tests/test_rpt.py           related-party register, sync and report
 frontend/                 React + Vite + Tailwind source of the /intelligence page
 ```
 
@@ -285,7 +311,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 103 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 110 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
