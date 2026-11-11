@@ -254,3 +254,6 @@ override_whitelisted_methods = {"frappe.client.get_password": "accounts_intellig
 # ignore_translatable_strings_from = []
 
 scheduler_events = {"cron": {"*/5 * * * *": ["accounts_intelligence.sync.client.scheduled_sync"]}}
+
+# The reconciliation frontend (frontend/) is a single page app: every path under /intelligence serves it.
+website_route_rules = [{"from_route": "/intelligence/<path:app_path>", "to_route": "intelligence"}]

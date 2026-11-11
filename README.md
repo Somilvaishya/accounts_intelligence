@@ -12,11 +12,11 @@ Works on **Frappe / ERPNext v15 and v16**, and runs on Frappe Cloud with no infr
 |---|---|
 | Site-to-site authentication and settings | **Built and tested** |
 | Sending accounting data from clients to the server | **Built and tested** |
-| Related party and inter-company matching | Planned |
-| Findings dashboard for the finance head | Planned |
+| Inter-company reconciliation: invoices, payments and balances | **Built and tested** |
+| Reconciliation frontend at `/intelligence` on the server | **Built** |
 | Chat over the group's data, limited to each user's permissions | Planned |
 
-The rest of this README describes what is built today: the trust layer every later part relies on, and the data sync that runs over it.
+The rest of this README describes what is built today: the trust layer every later part relies on, the data sync that runs over it, and the reconciliation that reads the synced data.
 
 ## How authentication works
 
@@ -100,7 +100,9 @@ Each client sends the **headers** of its documents with **other group companies*
 | Journal Entry | one row per entry and group-company party, with the net amount in company currency |
 | Balance with each group company | sent only on the days it changes |
 
-**How group companies are found.** Each company is identified by its PAN, which every one of its GSTINs contains. On its first sync a client registers its companies with the server. The server answers with the **watch list**: the PAN of every group company. The client then sends only documents whose customer or supplier has one of those PANs, read from the party's `pan`, `gstin` (India Compliance) or `tax_id` field.
+**How group companies are found.** Each company is identified by its PAN, which every one of its GSTINs contains. A site represents one company: the **Default Company** in Global Defaults, or the only company on the site. On every run the client registers that company with the server, and the server answers with the **watch list**: the PAN of every group company. The client then sends only documents whose customer or supplier has one of those PANs, read from the party's `pan`, `gstin` (India Compliance) or `tax_id` field, or from the GSTIN on one of its addresses.
+- A party with the site's own PAN is the company itself under another GSTIN, so its documents are not sent.
+- A party is never matched by name. One named like a group company but without its PAN or GSTIN is listed in **Last Sync Result**, so it can be fixed.
 
 **How it stays correct**
 - Each document type has a watermark (last `modified` and name). It moves only after the server's signed reply accepts the batch. A failed run sends the same rows again, and the server's upsert makes that harmless.
@@ -117,6 +119,26 @@ Each client sends the **headers** of its documents with **other group companies*
 | Sync Documents From on a site row | Overrides the group date for that site, for example a company that joined the group later. |
 
 **Where it is stored on the server:** **Accounts Intelligence Entity** (one row per group company, named by PAN), **Accounts Intelligence Transaction** (one row per document, or per party for a journal entry) and **Accounts Intelligence Balance**. On the client, only the Data Sync section of the settings changes: Last Sync On, Last Sync Result and a hidden state field.
+
+## How reconciliation works
+
+For each pair of group companies, the server compares what each one recorded about the other. It is worked out on request from the synced rows, so nothing extra is stored and nothing goes stale. Cancelled documents are left out.
+
+| Check | How lines are paired |
+|---|---|
+| Invoices | The seller's sales invoice with the buyer's purchase invoice: first by the buyer's **bill number**, which names the seller's invoice in full (`SI090126-0317`) or by its trailing number (`0262`); then, for a purchase invoice without a usable bill number, the one sales invoice of the same date and amount. When more than one fits, nothing is guessed. |
+| Payments and journals | Each document counts as the amount it debits the other company's account. A payment one company makes is a receipt for the other, so a matching pair adds up to zero, within 3 days of each other. A payment can match a journal entry on the other side. A journal entry that nets to zero only moves an amount between the company's own customer and supplier accounts, so it is left out. |
+| Balances | Each company's latest balance with the other. They should add up to zero. |
+
+Each line is **Matched**, **Amount differs**, **Date differs**, or **Only at** one of the two companies. Differences under ₹1 count as matched, because the two books round taxes differently.
+
+Over the whole history, the open lines should explain the balance difference. What they do not explain is shown as **Unexplained**: documents older than the sync start date, or entries booked against a party that has no PAN.
+
+**The frontend.** On the server, open `/intelligence` (System Manager only).
+- **Overview:** every pair of companies with matched and open counts, the balance difference and the unexplained amount.
+- **Pair page:** both companies' balances, then every line side by side, filtered by status, type, period or text, with a CSV download. Each document links to the company site that holds it.
+
+It reads two endpoints, `accounts_intelligence.reconcile.overview` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
 
 ## Installation
 
@@ -194,7 +216,10 @@ Use two different host names so the browser keeps the two logins apart, and turn
 ```
 accounts_intelligence/
   api.py                  public endpoints: identity, connect, ping, rotate_key, sync_config, sync
+  reconcile.py            invoice, money and balance matching; the frontend's two endpoints
   overrides.py            blocks reading the private keys through frappe.client.get_password
+  www/intelligence.py     serves the frontend page (login, System Manager, server mode)
+  public/frontend/        the built frontend, committed so no site needs Node to install the app
   sync/
     client.py             collector, watermarks, daily check, scheduled job
     server.py             watch list, validation, bulk upsert, daily comparison
@@ -217,7 +242,20 @@ accounts_intelligence/
   tests/test_key_rotation.py  key rotation and regeneration
   tests/test_hardening.py     security audit fixes
   tests/test_sync.py          data sync
+  tests/test_reconcile.py     reconciliation
+frontend/                 React + Vite + Tailwind source of the /intelligence page
 ```
+
+### Changing the frontend
+
+```bash
+cd apps/accounts_intelligence/frontend
+yarn install
+yarn dev     # http://localhost:8081/intelligence, API calls go to the bench on port 8000
+yarn build   # type-checks, writes accounts_intelligence/public/frontend and www/intelligence.html
+```
+
+For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the bench is not on `http://127.0.0.1:8000`. Commit the build output together with the source change.
 
 ## Tests
 
@@ -225,7 +263,7 @@ accounts_intelligence/
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 85 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 94 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
@@ -235,7 +273,8 @@ The 85 tests build real HTTP requests and run them through the verification code
 - the settings guards;
 - key rotation: a successful switch, the old key alone being refused without the site URL, the proof bound to the request, and resuming an interrupted rotation without losing the new key;
 - Regenerate Key on a client and on the server;
-- data sync: only group-company documents are sent, resent batches are stored once, older copies never overwrite newer ones, a failed send keeps the watermark, the start date and interval, the daily check and resync.
+- data sync: only group-company documents are sent, resent batches are stored once, older copies never overwrite newer ones, a failed send keeps the watermark, the start date and interval, the daily check and resync;
+- reconciliation: invoices paired by full or trailing bill number and by date and amount, no guess when several fit, payments paired with payments or journals within 3 days, set-off journals left out, latest balances and the unexplained amount, System Manager only.
 
 They pass on v15 and v16.
 
