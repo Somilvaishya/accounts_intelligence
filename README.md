@@ -38,7 +38,7 @@ There are **no integration users, no API keys and no shared secrets**. The only 
   - the timestamp is more than 5 minutes off;
   - the nonce has been used before (checked atomically in Redis).
 - **Replies are signed too.** Each reply is bound to the request's nonce, so the client can verify that it came from the pinned server key and belongs to that request.
-- **Every rejection looks the same.** The caller always gets HTTP 401 `not_authorised`. The real reason is written only to the **Accounts Intelligence Auth Log** on the server, which is kept for 180 days.
+- **Every rejection looks the same.** The caller always gets HTTP 401 `not_authorised`. The real reason is written only to the **Accounts Intelligence Auth Log** on the server, which keeps refusals and other events for 180 days. Routine successes are kept short: an accepted ping is not logged (the site row's Last Seen records it), and accepted sync calls are cleared after 7 days by a daily job.
 - **HTTPS only in production.** Plain `http://` is accepted only when the "Allow Plain HTTP (Testing Only)" switch is on **and** the bench is in developer mode.
 
 A captured request cannot be altered, replayed, or sent to another server or endpoint.
@@ -380,7 +380,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 124 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 126 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;

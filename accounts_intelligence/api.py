@@ -44,7 +44,8 @@ def connect():
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=60, seconds=60)
 def ping():
-	return server.handle("Ping", server.ping_handler, limit_per_minute=600)
+	# A ping that works only says the site is there, which its Last Seen already records.
+	return server.handle("Ping", server.ping_handler, limit_per_minute=600, log_accepted=False)
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])

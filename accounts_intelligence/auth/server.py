@@ -36,11 +36,14 @@ class SignedRequest:
 	nonce: str
 
 
-def handle(event: str, handler, connect=False, limit_per_minute=600):
+def handle(event: str, handler, connect=False, limit_per_minute=600, log_accepted=True):
 	"""Verify the current request, run the handler, and sign its result for the caller.
 
 	`limit_per_minute` caps the endpoint for all callers together. Frappe's per-IP limit relies on
 	X-Forwarded-For, which a caller can set, so this cap is what bounds a flood.
+
+	Refused and failed requests are always logged. `log_accepted=False` skips the log row for a request
+	that succeeded, for routine calls whose success the site row's Last Seen already records.
 	"""
 	claimed_site = (frappe.get_request_header(signing.HEADER_SITE) or "")[:140]
 	if over_limit(event, limit_per_minute):
@@ -62,9 +65,10 @@ def handle(event: str, handler, connect=False, limit_per_minute=600):
 		frappe.log_error(title=f"Accounts Intelligence: {event} failed")
 		audit.log(event, "Error", site_url=claimed_site, reason="unexpected error, see Error Log")
 		return server_error()
-	audit.log(
-		event, "Accepted", site_url=request.row.site_url, fingerprint=keys.fingerprint(request.public_key)
-	)
+	if log_accepted:
+		audit.log(
+			event, "Accepted", site_url=request.row.site_url, fingerprint=keys.fingerprint(request.public_key)
+		)
 	return signing.sign_response(private_key, request.nonce, {**result, "for_site": request.row.site_url})
 
 

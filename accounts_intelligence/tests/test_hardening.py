@@ -1,6 +1,6 @@
 """Tests for the audit fixes: private key export (M1), approval bound to a fingerprint (M2), site URL
 changes while connected (M3), rejection log flooding and endpoint caps (M4), Auth Log indexes (M5),
-and the low-severity items L1-L7."""
+and the low-severity items L1-L7 and L9 (Auth Log volume)."""
 
 from unittest.mock import MagicMock, patch
 
@@ -311,3 +311,63 @@ class TestPlainHTTPMessage(FrappeTestCase):
 		self.assertIn("http://127.0.0.1:8000", message)
 		self.assertIn("http://localhost:8001", message)
 		self.assertIn("Reset Selected", message, "a connected site must be told to reset first")
+
+
+class TestAuthLogVolume(FrappeTestCase):
+	"""L9: routine successes do not fill the Auth Log; refusals are kept."""
+
+	def setUp(self):
+		_reset_settings(row_status="Active", row_key=keys.generate_keypair()[1])
+		frappe.db.delete(AUTH_LOG)
+		clear_counters()
+
+	def tearDown(self):
+		frappe.local.request = None
+
+	def _handle(self, event, **kwargs):
+		"""A request that passes verification, so only the logging decision is under test."""
+		request = server.SignedRequest(
+			row=frappe._dict(_row()), data={}, public_key=keys.generate_keypair()[1], nonce="a" * 32
+		)
+		frappe.local.request = EnvironBuilder(path=PING, method="POST", data=b"{}").get_request()
+		frappe.local.response = frappe._dict()
+		with (
+			patch.object(server, "verify_request", return_value=request),
+			patch.object(server, "get_decrypted_password", return_value="key"),
+			patch.object(signing, "sign_response", return_value={"ok": True}),
+		):
+			return server.handle(event, server.ping_handler, **kwargs)
+
+	def test_an_accepted_ping_is_not_logged_but_a_refused_one_is(self):
+		self._handle("Ping", log_accepted=False)
+		self.assertEqual(frappe.db.count(AUTH_LOG), 0, "Last Seen already records it")
+		self._handle("Sync")
+		self.assertEqual(frappe.db.count(AUTH_LOG, {"event": "Sync", "result": "Accepted"}), 1)
+
+		frappe.local.request = EnvironBuilder(path=PING, method="POST", data=b"{}").get_request()
+		frappe.local.response = frappe._dict()
+		server.handle("Ping", server.ping_handler, log_accepted=False)
+		self.assertEqual(
+			frappe.db.count(AUTH_LOG, {"event": "Ping", "result": "Rejected"}),
+			1,
+			"refusals are always logged",
+		)
+
+	def test_old_routine_entries_are_cleared_and_everything_else_is_kept(self):
+		for event, result in (
+			("Sync", "Accepted"),
+			("Sync config", "Accepted"),
+			("Sync", "Rejected"),
+			("Connect", "Accepted"),
+		):
+			audit.log(event, result, site_url=CLIENT)
+		frappe.db.sql(f"update `tab{AUTH_LOG}` set creation = now() - interval 8 day")
+		audit.log("Sync", "Accepted", site_url=CLIENT)
+
+		audit.clear_routine_entries()
+		left = frappe.get_all(AUTH_LOG, fields=["event", "result"])
+		self.assertEqual(
+			sorted((r.event, r.result) for r in left),
+			[("Connect", "Accepted"), ("Sync", "Accepted"), ("Sync", "Rejected")],
+			"old accepted sync rows go; refusals, other events and this week's rows stay",
+		)
