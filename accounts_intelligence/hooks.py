@@ -10,7 +10,8 @@ app_license = "mit"
 
 required_apps = ["frappe", "erpnext"]
 
-# Auth log rows are kept for 180 days, then removed by Frappe's log cleanup.
+# Auth log rows are kept for 180 days, then removed by Frappe's log cleanup. Accepted routine sync rows
+# go after 7 days (auth/audit.py, clear_routine_entries).
 default_log_clearing_doctypes = {"Accounts Intelligence Auth Log": 180}
 
 # Refuse to hand this app's private keys to API callers; every other Password field works as before.
@@ -253,7 +254,10 @@ override_whitelisted_methods = {"frappe.client.get_password": "accounts_intellig
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
 
-scheduler_events = {"cron": {"*/5 * * * *": ["accounts_intelligence.sync.client.scheduled_sync"]}}
+scheduler_events = {
+	"cron": {"*/5 * * * *": ["accounts_intelligence.sync.client.scheduled_sync"]},
+	"daily": ["accounts_intelligence.auth.audit.clear_routine_entries"],
+}
 
 # The reconciliation frontend (frontend/) is a single page app: every path under /intelligence serves it.
 website_route_rules = [{"from_route": "/intelligence/<path:app_path>", "to_route": "intelligence"}]

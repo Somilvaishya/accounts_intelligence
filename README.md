@@ -38,7 +38,7 @@ There are **no integration users, no API keys and no shared secrets**. The only 
   - the timestamp is more than 5 minutes off;
   - the nonce has been used before (checked atomically in Redis).
 - **Replies are signed too.** Each reply is bound to the request's nonce, so the client can verify that it came from the pinned server key and belongs to that request.
-- **Every rejection looks the same.** The caller always gets HTTP 401 `not_authorised`. The real reason is written only to the **Accounts Intelligence Auth Log** on the server, which is kept for 180 days.
+- **Every rejection looks the same.** The caller always gets HTTP 401 `not_authorised`. The real reason is written only to the **Accounts Intelligence Auth Log** on the server, which keeps refusals and other events for 180 days. Routine successes are kept short: an accepted ping is not logged (the site row's Last Seen records it), and accepted sync calls are cleared after 7 days by a daily job.
 - **HTTPS only in production.** Plain `http://` is accepted only when the "Allow Plain HTTP (Testing Only)" switch is on **and** the bench is in developer mode.
 
 A captured request cannot be altered, replayed, or sent to another server or endpoint.
@@ -300,6 +300,64 @@ Open **Accounts Intelligence Settings** on each site.
 | Server data looks incomplete for a company | Check the row's **Last Daily Check**. To send everything again, select the row and click **Resync Selected**; nothing stored is deleted. |
 | Backups | Keep a copy of each site's `encryption_key`. The private key cannot be decrypted after a restore without it. |
 
+## Reading the numbers
+
+For the finance and accounts team: what the frontend at `/intelligence` shows, what to do about it, and how to check it against the books.
+
+### Three rules behind every figure
+
+- **A balance is debit positive.** Each company's balance is the debit minus credit on the other company's accounts in its own books, customer and supplier added together. Above zero, the other company owes it. The frontend says it in words: "GGSPL owes GGIL ₹14,040". When both books agree, one is +X and the other −X, so **balance difference = A's balance + B's balance**, which should be 0.
+- **Amounts are in company currency.** Invoices include tax; the related-party report shows sales and purchases without tax.
+- **Up to ₹1 counts as matched,** because the two books round taxes differently.
+
+### The dashboard
+
+| Figure | How it is worked out | What it tells you |
+|---|---|---|
+| Balance gap | The balance differences of all pairs, added as amounts | How much the books disagree in total; start with the largest pair |
+| Open items | Lines that do not match, with how many are already explained | How much work is left; open the Open items page |
+| Match rate | Matched lines ÷ (matched + open) | How clean the process is; good bill numbers raise it |
+| Unexplained | Balance difference less the differences of all lines, all time only | Close to 0: every rupee of the gap is in the lines. Large: something is not synced (see below) |
+| Gap by pair | Green: under ₹1 and nothing open. Amber: under ₹1 lakh. Red: ₹1 lakh or more | Where the problem is |
+| Lines by month | Matched, differs, missing per month | Months where entries were missed |
+| Ageing | Open lines by days since the document date, with the amount | What to fix first: the oldest |
+
+The period filter applies to lines, not to balances, which are always as of the last sync.
+
+### What to do about each status
+
+Fix every difference **in the company site's own books**. The frontend changes nothing; after the next sync the line updates by itself.
+
+| Status | Meaning | What to do |
+|---|---|---|
+| Only at A (invoice) | A billed; B has no matching purchase invoice | B books it with A's invoice number as the bill number, or corrects the bill number of the one it booked. If A's invoice is wrong, A issues a credit note |
+| Amount differs | Both booked, totals differ by more than ₹1 | Compare items, rates, GST, freight, discount. A difference equal to TDS may be TDS. Correct the wrong side with a debit or credit note |
+| Date differs | Same invoice, different posting dates | Correct the date if it is a mistake (the GST period may change); otherwise explain it as a timing difference |
+| Only at A (payment or journal) | One side paid, the other has no receipt within 3 days | The other side books it from its bank statement, or moves it to the right party |
+| Large Unexplained | Part of the gap is in no synced document | Check the sync start date (opening balances), the PAN warnings on Sync Health, and vouchers other than invoices, payments and journals on the party ledger |
+| No balance received, or a site Late | The site is not syncing | Check its scheduler, its connection and its Last Sync Result |
+
+In **Open items**, assign a line, mark it in progress, or explain it with a reason. An explained line still counts as open, because the books still differ.
+
+### Checking the figures against ERPNext
+
+1. **Is the data complete?** On **Sync health**, both companies are Healthy, the daily check says "all N months match", and there are no warnings.
+2. **Balances.** On the company site, run **General Ledger** for the other company's customer and supplier (all of them with its PAN) up to today. Customer plus supplier closing balance, debit positive, equals the "In A's books" card. Do the same on the other site; the two added together equal the Difference card. A balance is as of the last sync: see "Balances as of".
+3. **Counts.** Filter the pair page to a period. The Sales Invoice list on the company site (that customer, submitted, same dates) gives the same count and total as that company's sales invoices on the page, matched and unmatched. The same goes for purchase invoices and payment entries.
+4. **Single lines.** A document number on the page opens that document on its company site.
+5. **The gap.** "What makes up the difference" plus Unexplained adds up to the difference; the CSV of open lines gives the same totals.
+6. **Related parties.** A party's Sales equals the net total in the **Sales Register** for that customer and period, cancelled invoices left out; its balance equals its General Ledger closing balance on the period's last day.
+
+### Limits to keep in mind
+
+- Only Sales Invoice, Purchase Invoice, Payment Entry and Journal Entry are synced, as headers without items.
+- A party without a PAN or GSTIN is not recognised, and its documents are not sent.
+- Each site sends its Default Company only.
+- Matching rules are fixed: bill number, then date and amount; ₹1 tolerance; payments within 3 days. Anything outside them shows as open.
+- Foreign-currency documents can differ by the exchange rate.
+- Reconciliation needs both companies to sync; for related parties without a site the report shows one side.
+- Salaries paid through payroll are not in the related-party report.
+
 ## Testing two sites on one local bench
 
 `bench start` serves **only the default site**: with no `--site`, `bench serve` takes `default_site` and answers every host as that site. To run a server and a client side by side, start a second web server pinned to the other site:
@@ -380,7 +438,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 124 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 126 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;

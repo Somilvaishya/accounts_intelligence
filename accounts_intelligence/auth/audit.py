@@ -1,4 +1,5 @@
 import frappe
+from frappe.utils import add_days, now_datetime
 
 from accounts_intelligence.auth import AUTH_LOG
 
@@ -6,6 +7,23 @@ from accounts_intelligence.auth import AUTH_LOG
 # unauthenticated caller cannot fill the table however many requests they send.
 REJECTION_LOG_AT = (1, 10, 100, 1000, 10000)
 REJECTION_WINDOW = 60
+
+# Every site writes these on every run, so they are kept a week: enough for the Sync Health activity
+# chart and recent troubleshooting. Everything else, refusals above all, stays for the 180 days in hooks.
+ROUTINE_EVENTS = ("Sync", "Sync config")
+ROUTINE_DAYS = 7
+
+
+def clear_routine_entries():
+	"""Delete accepted routine sync entries older than ROUTINE_DAYS. Runs daily."""
+	frappe.db.delete(
+		AUTH_LOG,
+		{
+			"event": ("in", ROUTINE_EVENTS),
+			"result": "Accepted",
+			"creation": ("<", add_days(now_datetime(), -ROUTINE_DAYS)),
+		},
+	)
 
 
 def log(event, result, site_url="", reason="", fingerprint=""):
