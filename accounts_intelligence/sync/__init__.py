@@ -14,8 +14,14 @@ TRANSACTION = "Accounts Intelligence Transaction"
 BALANCE = "Accounts Intelligence Balance"
 RELATED_PARTY = "Accounts Intelligence Related Party"
 
-SOURCES = ("Sales Invoice", "Purchase Invoice", "Payment Entry", "Journal Entry")
+# An Account Entry is the net of one voucher on a ledger account marked Is Related Party: every voucher type,
+# read from the GL Entry table. It reaches parts of the books no customer or supplier does, such as a
+# director's loan account or remuneration posted through payroll.
+ACCOUNT_ENTRY = "Account Entry"
+SOURCES = ("Sales Invoice", "Purchase Invoice", "Payment Entry", "Journal Entry", ACCOUNT_ENTRY)
 PARTY_TYPES = ("Customer", "Supplier")
+# The party type of a related-party account, in synced rows.
+ACCOUNT = "Account"
 MAX_ROWS = 500
 # The "Sync Every" options on the server, in minutes. Clients check every 5 minutes whether a run is due.
 SYNC_EVERY = {"5 minutes": 5, "15 minutes": 15, "30 minutes": 30, "1 hour": 60, "6 hours": 360, "1 day": 1440}

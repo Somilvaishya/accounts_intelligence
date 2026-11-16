@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { Counts, PairRow } from "../api";
-import { AgeingBars, GapBars, MonthBars, Network, Ring } from "../components/Charts";
+import { AgeingBars, GapBars, MonthBars, Network } from "../components/Charts";
 import Icon, { type IconName } from "../components/Icon";
 import { TONE, TONE_TEXT, acronym, ago, gapTone, money, moneyShort, short } from "../format";
 import { Message, PeriodFilter, downloadCsv, useShell } from "../Layout";
@@ -73,24 +73,19 @@ function Kpis({ pairs }: { pairs: PairRow[] }) {
   const withGap = pairs.filter((p) => gapTone(p.summary.balance_difference, p.summary.open) !== "good").length;
   const openInvoices = pairs.reduce((sum, p) => sum + open(p.summary.invoice), 0);
   const openMoney = pairs.reduce((sum, p) => sum + open(p.summary.money), 0);
-  const matched = pairs.reduce((sum, p) => sum + p.summary.invoice.matched + p.summary.money.matched, 0);
-  const total = matched + openInvoices + openMoney;
-  const rate = total ? Math.round((matched / total) * 1000) / 10 : 100;
   const explained = pairs.reduce((sum, p) => sum + p.summary.explained, 0);
   const unexplained = pairs.some((p) => p.summary.unexplained == null)
     ? null
     : pairs.reduce((sum, p) => sum + Math.abs(p.summary.unexplained ?? 0), 0);
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
       <Kpi label="Balance gap" icon="alert" tone={gap > 1 ? "bad" : "good"} value={moneyShort(gap)} title={money(gap)}
         caption={`across ${withGap} of ${pairs.length} company ${pairs.length === 1 ? "pair" : "pairs"}`}
         footer={["Largest", worst ? `${acronym(worst.a.name)} ↔ ${acronym(worst.b.name)}` : "—"]} />
       <Kpi label="Open items" icon="pair" value={String(openInvoices + openMoney)}
         caption={explained ? `${explained} already explained` : "lines that need a look"}
         footer={["Invoices · money", `${openInvoices} · ${openMoney}`]} />
-      <Kpi label="Match rate" icon="check" value={`${rate}%`} caption={`${matched} of ${total} lines`}
-        aside={<Ring value={rate} />} footer={["Matched automatically", String(matched)]} />
       <Kpi label="Unexplained" icon="check" tone={unexplained == null ? undefined : unexplained > 1 ? "warn" : "good"}
         value={unexplained == null ? "—" : moneyShort(unexplained)} title={unexplained == null ? undefined : money(unexplained)}
         caption={unexplained == null ? "shown for all dates only" : "gap no open line accounts for"}
@@ -99,9 +94,9 @@ function Kpis({ pairs }: { pairs: PairRow[] }) {
   );
 }
 
-function Kpi({ label, icon, value, caption, footer, tone, title, aside }: {
+function Kpi({ label, icon, value, caption, footer, tone, title }: {
   label: string; icon: IconName; value: string; caption: string; footer: [string, string];
-  tone?: keyof typeof TONE; title?: string; aside?: ReactNode;
+  tone?: keyof typeof TONE; title?: string;
 }) {
   return (
     <div className="card flex flex-col justify-between p-4">
@@ -109,12 +104,9 @@ function Kpi({ label, icon, value, caption, footer, tone, title, aside }: {
         <span className="caps">{label}</span>
         <Icon name={icon} className={`h-4 w-4 ${tone ? TONE_TEXT[tone] : "text-ink-3"}`} />
       </div>
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <div>
-          <div className={`text-2xl font-semibold tracking-tight tabular-nums ${tone ? TONE_TEXT[tone] : ""}`} title={title}>{value}</div>
-          <div className="mt-0.5 text-xs text-ink-3">{caption}</div>
-        </div>
-        {aside}
+      <div className="mt-2">
+        <div className={`text-2xl font-semibold tracking-tight tabular-nums ${tone ? TONE_TEXT[tone] : ""}`} title={title}>{value}</div>
+        <div className="mt-0.5 text-xs text-ink-3">{caption}</div>
       </div>
       <div className="mt-3 flex items-center justify-between gap-2 rounded-md bg-sunken px-2.5 py-1.5">
         <span className="caps">{footer[0]}</span>

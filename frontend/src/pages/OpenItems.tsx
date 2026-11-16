@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { REASONS, getOpenItems, saveReview, useLoad, type Doc, type OpenItem, type Review, type User } from "../api";
 import { AgeingBars } from "../components/Charts";
 import Icon from "../components/Icon";
-import { STATUS_STYLE, TONE, acronym, date, docUrl, money, moneyShort, statusLabel } from "../format";
+import { STATUS_STYLE, TONE, acronym, date, docType, docUrl, money, moneyShort, statusLabel } from "../format";
 import { Message, PeriodFilter, askAssistant, downloadCsv, useShell } from "../Layout";
 
 type Show = "todo" | "In progress" | "Explained" | "all";
@@ -300,9 +300,11 @@ function Side({ doc, company }: { doc: Doc | null; company: OpenItem["pair"]["a"
         <span className="tabular-nums">{money(doc.amount)}</span>
       </div>
       <div className="text-ink-3">
-        {acronym(company.name)} · {doc.doctype}{doc.payment_type ? ` · ${doc.payment_type}` : ""} · {date(doc.date)}
+        {acronym(company.name)} · {docType(doc)}{doc.payment_type ? ` · ${doc.payment_type}` : ""} · {date(doc.date)}
       </div>
-      {(doc.bill_no || doc.reference_no) && (
+      {doc.doctype === "Account Entry" ? (
+        <div className="truncate text-ink-3" title={doc.party}>Account {doc.party}</div>
+      ) : (doc.bill_no || doc.reference_no) && (
         <div className="truncate text-ink-3" title={doc.bill_no ?? doc.reference_no}>{doc.bill_no ? `Bill ${doc.bill_no}` : doc.reference_no}</div>
       )}
     </div>

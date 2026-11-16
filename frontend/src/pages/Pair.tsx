@@ -4,7 +4,7 @@ import { getPair, useLoad, type Company, type Doc, type Line, type PairResult } 
 import { AgeingBars } from "../components/Charts";
 import Icon from "../components/Icon";
 import {
-  STATUS_STYLE, TONE_TEXT, acronym, csvRows, date, docUrl, gapTone, money, moneyShort, owes, short, statusLabel,
+  STATUS_STYLE, TONE_TEXT, acronym, csvRows, date, docType, docUrl, gapTone, money, moneyShort, owes, short, statusLabel,
 } from "../format";
 import { Message, PeriodFilter, downloadCsv, useShell } from "../Layout";
 
@@ -251,7 +251,8 @@ function DocCell({ doc, company, lineDate }: { doc: Doc | null; company: Company
     );
   }
   const url = docUrl(doc, company);
-  const reference = doc.bill_no ? `Bill ${doc.bill_no}` : doc.reference_no;
+  const account = doc.doctype === "Account Entry";
+  const reference = doc.bill_no ? `Bill ${doc.bill_no}` : account ? undefined : doc.reference_no;
   return (
     <td className="px-4 py-3">
       <div className="flex flex-wrap items-baseline gap-x-2">
@@ -266,7 +267,7 @@ function DocCell({ doc, company, lineDate }: { doc: Doc | null; company: Company
         {doc.date !== lineDate && <span className="text-xs text-amber-700 dark:text-amber-400">{date(doc.date)}</span>}
       </div>
       <div className="text-xs text-ink-3">
-        {doc.doctype}{doc.payment_type ? ` · ${doc.payment_type}` : ""}{doc.party ? ` · ${doc.party}` : ""}
+        {docType(doc)}{doc.payment_type ? ` · ${doc.payment_type}` : ""}{doc.party ? ` · ${account ? "account " : ""}${doc.party}` : ""}
       </div>
       {reference && <div className="max-w-xs truncate text-xs text-ink-3" title={reference}>{reference}</div>}
     </td>

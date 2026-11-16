@@ -11,11 +11,12 @@ const COLUMNS = [
   ["received", "Received"],
   ["paid", "Paid"],
   ["journals", "Journals"],
+  ["accounts", "Accounts"],
 ] as const;
 type Column = (typeof COLUMNS)[number][0];
 
 const sum = (rows: RptRow[], column: Column) => rows.reduce((total, r) => total + r[column], 0);
-const volume = (r: RptRow) => Math.abs(r.sales) + Math.abs(r.purchases) + Math.abs(r.received) + Math.abs(r.paid) + Math.abs(r.journals);
+const volume = (r: RptRow) => COLUMNS.reduce((total, [key]) => total + Math.abs(r[key]), 0);
 
 export default function RelatedParties() {
   const { period, setPeriod, query } = useShell();
@@ -74,8 +75,8 @@ export default function RelatedParties() {
           <Table rows={data.rows} order={data.relationships} showCompany={!company} />
           <p className="text-xs text-ink-3">
             Amounts in company currency from the synced documents: sales and purchases without tax and net of returns,
-            money received and paid through payment entries, journal entries as the net debit to the party, and the
-            balance on the last day of the period. Remuneration paid through payroll is not synced, so it is not included.
+            money received and paid through payment entries, journal entries as the net debit to the party, entries on
+            ledger accounts marked Is Related Party for the party, and the balance on the last day of the period. Remuneration paid through payroll is not synced, so it is not included.
           </p>
         </div>
       )}

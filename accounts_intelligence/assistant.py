@@ -327,7 +327,7 @@ def related_party_transactions(companies, company=None, from_date=None, to_date=
 			else r["company"]["name"],
 			"related_party": r["party"]["name"],
 			"relationship": r["party"]["relationship"],
-			**{k: _inr(r[k]) for k in ("sales", "purchases", "received", "paid", "journals") if r[k]},
+			**{k: _inr(r[k]) for k in rpt.COLUMNS if r[k]},
 			"closing_balance": balance(r["balance"]),
 		}
 		for r in data["rows"]

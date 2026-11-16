@@ -125,6 +125,44 @@ class TestReconcile(FrappeTestCase):
 		self.assertEqual(_status(result, "PAY-A3"), "only_a", "eleven days apart is too far")
 		self.assertEqual(_status(result, "PAY-B3"), "only_b")
 
+	def test_a_loan_booked_on_accounts_reconciles_like_money(self):
+		# Alpha lends Beta 1,000 through its loan account; Beta books it on its own loan account.
+		_add(
+			A,
+			"Account Entry",
+			"JV-LOAN-A",
+			"2026-10-10",
+			1000,
+			party_type="Account",
+			reference_no="Journal Entry",
+		)
+		_add(
+			B,
+			"Account Entry",
+			"JV-LOAN-B",
+			"2026-10-11",
+			-1000,
+			party_type="Account",
+			reference_no="Journal Entry",
+		)
+		# A transfer between Alpha's own customer account and loan account for Beta is no money between them.
+		_add(A, "Journal Entry", "JV-MOVE", "2026-10-12", 400, party_type="Customer")
+		_add(
+			A,
+			"Account Entry",
+			"JV-MOVE",
+			"2026-10-12",
+			-400,
+			party_type="Account",
+			reference_no="Journal Entry",
+		)
+		_balance(A, "Account", "2026-10-31", 1000)
+		_balance(B, "Account", "2026-10-31", -1000)
+		result = reconcile.reconcile(A, B)
+		self.assertEqual(_status(result, "JV-LOAN-A"), "matched")
+		self.assertEqual(_status(result, "JV-MOVE"), [], "a voucher that nets to zero is left out")
+		self.assertEqual(result["balance"]["difference"], 0)
+
 	def test_balances_use_the_latest_figure_and_open_lines_explain_the_gap(self):
 		_balance(A, "Customer", "2026-10-01", 5000)
 		_balance(A, "Customer", "2026-10-31", 1000)

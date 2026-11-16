@@ -16,6 +16,7 @@ from frappe.utils import now_datetime
 from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS, audit
 from accounts_intelligence.auth.server import Rejected
 from accounts_intelligence.sync import (
+	ACCOUNT,
 	BALANCE,
 	DEFAULT_SYNC_EVERY,
 	ENTITY,
@@ -228,7 +229,7 @@ def _label(row) -> str:
 
 def _transaction(row) -> dict:
 	source_doctype = _choice(row["source_doctype"], SOURCES)
-	party_type = _choice(row["party_type"], PARTY_TYPES)
+	party_type = _choice(row["party_type"], (*PARTY_TYPES, ACCOUNT))
 	values = {
 		"entity": _text(row["entity"], required=True),
 		"counterparty": _text(row["counterparty"], required=True),
@@ -261,7 +262,7 @@ def _balance(row) -> dict:
 	values = {
 		"entity": _text(row["entity"], required=True),
 		"counterparty": _text(row["counterparty"], required=True),
-		"party_type": _choice(row["party_type"], PARTY_TYPES),
+		"party_type": _choice(row["party_type"], (*PARTY_TYPES, ACCOUNT)),
 		"party": _text(row["party"], required=True),
 		"as_of": date.fromisoformat(row["as_of"]),
 		"balance": _amount(row["balance"]),

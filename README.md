@@ -101,11 +101,17 @@ Each client sends the **headers** of its documents with **other group companies*
 |---|---|
 | Sales Invoice, Purchase Invoice, Payment Entry (submitted or cancelled) | company, document, posting date, party, PAN of the counterparty, grand total, net total, tax, currency, total in company currency, return and cancelled flags, supplier invoice no, payment type, reference no |
 | Journal Entry | one row per entry and watched party, with the net amount in company currency |
-| Balance with each group company and related party | sent only on the days it changes |
+| Account Entry | one row per voucher (any type) and ledger account marked **Is Related Party**, with the net debit in company currency and the voucher type as its reference |
+| Balance with each group company and related party | sent only on the days it changes; includes the balance of its related-party accounts |
 
 **How group companies are found.** Each company is identified by its PAN, which every one of its GSTINs contains. A site represents one company: the **Default Company** in Global Defaults, or the only company on the site. On every run the client registers that company with the server, and the server answers with the **watch list**: the PAN of every group company, and of every party in the related-party register that is related to this company. The client then sends only documents whose customer or supplier has one of those PANs, read from the party's `pan`, `gstin` (India Compliance) or `tax_id` field, or from the GSTIN on one of its addresses.
 - A party with the site's own PAN is the company itself under another GSTIN, so its documents are not sent.
 - A party is never matched by name. One named like a group company but without its PAN or GSTIN is listed in **Last Sync Result**, so it can be fixed.
+
+**Related parties at account level.** Some dealings never name a customer or supplier: a director's loan account, rent or remuneration booked to an account, an inter-company loan. The app adds two fields to ERPNext's **Account** on every site: **Is Related Party** and, once it is ticked, **Related Party PAN** (a GSTIN is accepted and turned into the PAN; a group account is refused).
+- If the PAN is a group company or in the related-party register, the site sends every voucher on that account as an **Account Entry**, read from the GL Entry table, so it covers journal entries, invoices, payments and payroll alike. Otherwise **Last Sync Result** says the account is not sent.
+- A ledger line on that account that also names a watched customer or supplier is left out: it is sent with that party's document already, so nothing is counted twice.
+- Account entries take part in the daily check, count as money in the reconciliation (an inter-company loan booked on accounts on both sides matches like a payment), and have their own **Accounts** column in the related-party report.
 
 **How it stays correct**
 - Each document type has a watermark (last `modified` and name). It moves only after the server's signed reply accepts the batch. A failed run sends the same rows again, and the server's upsert makes that harmless.
@@ -138,7 +144,7 @@ Each line is **Matched**, **Amount differs**, **Date differs**, or **Only at** o
 Over the whole history, the open lines should explain the balance difference. What they do not explain is shown as **Unexplained**: documents older than the sync start date, or entries booked against a party that has no PAN.
 
 **The frontend.** On the server, open `/intelligence` (System Manager only).
-- **Dashboard:** the total balance gap, open items, match rate and unexplained amount; charts of the gap per company pair, lines per month, open items by age and the group as a network; then every pair with its matched and open counts. The sidebar lists the pairs and shows how the company sites are syncing.
+- **Dashboard:** the total balance gap, open items and unexplained amount; charts of the gap per company pair, lines per month, open items by age and the group as a network; then every pair with its matched and open counts. The sidebar lists the pairs and shows how the company sites are syncing.
 - **Pair page:** both companies' balances, what makes up the difference, open items by age, then every line side by side, filtered by status, type, period or text, with a CSV download. Each document links to the company site that holds it.
 - Light and dark themes, and the assistant in a side panel.
 
@@ -210,6 +216,7 @@ The register drives the sync. Each client watches the PANs of its own related pa
 - sales and purchases without tax and net of returns;
 - money received and paid;
 - the net of journal entries;
+- the net of the vouchers on ledger accounts marked Is Related Party for the party (Accounts);
 - the balance on the period's last day.
 
 Cancelled documents are left out. Transactions outside a party's Related From / Until dates are left out. Remuneration paid through payroll is not synced, so it is not included.
@@ -316,7 +323,6 @@ For the finance and accounts team: what the frontend at `/intelligence` shows, w
 |---|---|---|
 | Balance gap | The balance differences of all pairs, added as amounts | How much the books disagree in total; start with the largest pair |
 | Open items | Lines that do not match, with how many are already explained | How much work is left; open the Open items page |
-| Match rate | Matched lines ÷ (matched + open) | How clean the process is; good bill numbers raise it |
 | Unexplained | Balance difference less the differences of all lines, all time only | Close to 0: every rupee of the gap is in the lines. Large: something is not synced (see below) |
 | Gap by pair | Green: under ₹1 and nothing open. Amber: under ₹1 lakh. Red: ₹1 lakh or more | Where the problem is |
 | Lines by month | Matched, differs, missing per month | Months where entries were missed |
@@ -334,7 +340,7 @@ Fix every difference **in the company site's own books**. The frontend changes n
 | Amount differs | Both booked, totals differ by more than ₹1 | Compare items, rates, GST, freight, discount. A difference equal to TDS may be TDS. Correct the wrong side with a debit or credit note |
 | Date differs | Same invoice, different posting dates | Correct the date if it is a mistake (the GST period may change); otherwise explain it as a timing difference |
 | Only at A (payment or journal) | One side paid, the other has no receipt within 3 days | The other side books it from its bank statement, or moves it to the right party |
-| Large Unexplained | Part of the gap is in no synced document | Check the sync start date (opening balances), the PAN warnings on Sync Health, and vouchers other than invoices, payments and journals on the party ledger |
+| Large Unexplained | Part of the gap is in no synced document | Check the sync start date (opening balances), the PAN warnings on Sync Health, vouchers other than invoices, payments and journals on the party ledger, and accounts that should be marked Is Related Party |
 | No balance received, or a site Late | The site is not syncing | Check its scheduler, its connection and its Last Sync Result |
 
 In **Open items**, assign a line, mark it in progress, or explain it with a reason. An explained line still counts as open, because the books still differ.
@@ -350,7 +356,7 @@ In **Open items**, assign a line, mark it in progress, or explain it with a reas
 
 ### Limits to keep in mind
 
-- Only Sales Invoice, Purchase Invoice, Payment Entry and Journal Entry are synced, as headers without items.
+- Sales Invoice, Purchase Invoice, Payment Entry and Journal Entry are synced as headers without items, plus any voucher on a ledger account marked Is Related Party.
 - A party without a PAN or GSTIN is not recognised, and its documents are not sent.
 - Each site sends its Default Company only.
 - Matching rules are fixed: bill number, then date and amount; ₹1 tolerance; payments within 3 days. Anything outside them shows as open.
@@ -383,6 +389,7 @@ accounts_intelligence/
   api.py                  public endpoints: identity, connect, ping, rotate_key, sync_config, sync
   reconcile.py            invoice, money and balance matching; the frontend's two endpoints
   assistant.py            the assistant: plan, run one tool, answer (model via AI Interface)
+  account.py              Is Related Party and Related Party PAN on Account
   rpt.py                  related-party transactions report
   open_items.py           the open items work queue and its reviews
   health.py               sync health: each site's state, warnings and activity
@@ -438,7 +445,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 126 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 130 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
