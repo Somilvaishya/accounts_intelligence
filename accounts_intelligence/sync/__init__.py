@@ -28,6 +28,15 @@ SYNC_EVERY = {"5 minutes": 5, "15 minutes": 15, "30 minutes": 30, "1 hour": 60, 
 DEFAULT_SYNC_EVERY = 15
 
 PAN_RE = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
+# Characters a synced value never needs: angle brackets (Desk shows Data fields as HTML, and rows written
+# with raw SQL skip Frappe's own cleaning) and line breaks or other control characters (which could pass
+# for instructions in the assistant's prompts).
+UNSAFE = re.compile(r"[<>\x00-\x1f\x7f]+")
+
+
+def plain(value, limit=140) -> str:
+	"""Text from another site made safe to store and show: no HTML, one line, at most `limit` characters."""
+	return " ".join(UNSAFE.sub(" ", "" if value is None else str(value)).split())[:limit]
 
 
 def pan_of(*values) -> str | None:

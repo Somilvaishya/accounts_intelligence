@@ -15,8 +15,8 @@ def identity():
 	During a key rotation a client also publishes the key it is about to switch to, which is how the
 	server confirms that the new key really belongs to this site.
 	"""
-	if server.over_limit("Identity", 300):
-		return server.throttled()
+	# No cap shared by all callers here: one cheap read of public data, and such a cap would let a flood
+	# stop the identity checks that connecting and key rotation rely on. The per-IP limit above stays.
 	settings = frappe.db.get_value(
 		SETTINGS, SETTINGS, ["mode", "site_url", "public_key", "pending_public_key"], as_dict=True
 	)

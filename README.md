@@ -89,6 +89,8 @@ POST
 | `accounts_intelligence.api.sync_config` | POST | Signature from an Active site | 30 / min |
 | `accounts_intelligence.api.sync` | POST | Signature from an Active site | 300 / min |
 
+Besides the per-IP limit, every endpoint except identity has a budget per minute (connect 60, ping 600, rotate_key 60, sync_config 120, sync 1,200). Each verified site has its own budget, and refused requests share one; past it they get HTTP 429 and are not logged. A flood of bad requests therefore cannot block the sites that sign correctly.
+
 The buttons on the settings form call `accounts_intelligence.auth.admin.*` and need the System Manager role.
 
 ## How data sync works
@@ -117,6 +119,8 @@ Each client sends the **headers** of its documents with **other group companies*
 - Each document type has a watermark (last `modified` and name). It moves only after the server's signed reply accepts the batch. A failed run sends the same rows again, and the server's upsert makes that harmless.
 - Rows are keyed on company, document type, document and party, so a resent row lands on the same record. An older copy of a document never overwrites a newer one.
 - A client can only write rows for the companies registered to its own site. The site comes from the request signature, not from the body.
+- A site registers one company (PAN): once registered, a different PAN from the same site is refused until the server admin deletes its Accounts Intelligence Entity. A company name already used by another group company is refused, and every rename is written to the Auth Log.
+- Text from a site (names, bill and reference numbers, its Last Sync Result) is stored without angle brackets, line breaks or control characters, so it can neither carry HTML into Desk nor pass for instructions in the assistant's prompts. Daily check keys must name a document type, one of the site's companies and a month.
 - **Daily check:** once a day the client sends its count and total per document type and month. The server compares them with what it stored and records the result in the site row's **Last Daily Check**. If the server is missing documents, the client sends that month again. If the server holds more (documents deleted on the client), the difference is only reported.
 
 **Rules set on the server** (Settings → Data Sync Rules):
@@ -432,6 +436,7 @@ frontend/                 React + Vite + Tailwind source of the /intelligence pa
 
 ```bash
 cd apps/accounts_intelligence/frontend
+nvm use      # Node 24 from .nvmrc; React Router 7 needs Node 20 or later
 yarn install
 yarn dev     # http://localhost:8081/intelligence, API calls go to the bench on port 8000
 yarn build   # type-checks, writes accounts_intelligence/public/frontend and www/intelligence.html
@@ -445,7 +450,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 130 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 137 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;

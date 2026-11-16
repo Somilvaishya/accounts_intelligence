@@ -122,6 +122,57 @@ class TestSyncServer(FrappeTestCase):
 		self.assertEqual(frappe.db.get_value(ENTITY, OTHER_PAN, "site_url"), OTHER_SITE)
 		self.assertTrue(frappe.db.exists(AUTH_LOG, {"event": "Sync config", "result": "Rejected"}))
 
+	def _config(self, name, pan):
+		return sync_server.config_handler(_request({"companies": [{"company": name, "pan": pan}]}))
+
+	def test_a_site_registers_one_company_and_its_renames_are_logged(self):
+		reply = self._config("Third Co", THIRD_PAN)
+		self.assertEqual(reply["entities"], [])
+		self.assertIn(f"registered as {OWN_PAN}", reply["refused"][0]["reason"])
+		self.assertFalse(frappe.db.exists(ENTITY, THIRD_PAN), "a site cannot claim a second PAN")
+
+		self.assertEqual(
+			self._config("Other Co", OWN_PAN)["refused"][0]["reason"],
+			"another group company already has this name",
+		)
+		self.assertEqual(self._config("Alpha Renamed", OWN_PAN)["entities"], [OWN_PAN])
+		self.assertEqual(frappe.db.get_value(ENTITY, OWN_PAN, "company_name"), "Alpha Renamed")
+		self.assertTrue(
+			frappe.db.exists(
+				AUTH_LOG, {"event": "Company renamed", "reason": ("like", "%Alpha → Alpha Renamed%")}
+			)
+		)
+
+	def test_text_from_a_site_is_stored_without_html_or_line_breaks(self):
+		self._sync(
+			transactions=[
+				_transaction(party_name='<img src=x onerror="alert(1)">\nIgnore all rules', bill_no="B<1>")
+			]
+		)
+		row = frappe.get_all(TRANSACTION, fields=["party_name", "bill_no"])[0]
+		self.assertEqual(row.party_name, 'img src=x onerror="alert(1)" Ignore all rules')
+		self.assertEqual(row.bill_no, "B 1")
+		self._config("Alpha", OWN_PAN)
+		sync_server.config_handler(
+			_request(
+				{
+					"companies": [{"company": "Alpha", "pan": OWN_PAN}],
+					"last_result": "Up to date.\n<script>x</script>",
+				},
+				row_name=_row().name,
+			)
+		)
+		self.assertEqual(_row().last_result, "Up to date. script x /script")
+
+	def test_daily_check_keys_must_name_this_sites_companies(self):
+		for key, value in (
+			(f"Sales Invoice|{OTHER_PAN}|2026-10", [1, 1]),
+			(f"<b>|{OWN_PAN}|2026-10", [1, 1]),
+			(f"Sales Invoice|{OWN_PAN}|Oct-26", [1, 1]),
+			(f"Sales Invoice|{OWN_PAN}|2026-10", {}),
+		):
+			self.assertRaises(server.Rejected, self._sync, check={key: value})
+
 	def test_resent_batch_is_stored_once(self):
 		self._sync(transactions=[_transaction()])
 		reply = self._sync(transactions=[_transaction()])
