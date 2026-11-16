@@ -2,6 +2,7 @@
 changes while connected (M3), rejection log flooding and endpoint caps (M4), Auth Log indexes (M5),
 and the low-severity items L1-L7 and L9 (Auth Log volume)."""
 
+import socket
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -410,3 +411,40 @@ class TestAuthLogVolume(FrappeTestCase):
 			[("Connect", "Accepted"), ("Sync", "Accepted"), ("Sync", "Rejected")],
 			"old accepted sync rows go; refusals, other events and this week's rows stay",
 		)
+
+
+class TestOutboundDestination(FrappeTestCase):
+	"""Outside local testing, the server only calls public addresses (a client controls its own DNS)."""
+
+	def setUp(self):
+		_reset_settings(row_status="Active", row_key=keys.generate_keypair()[1])
+
+	def _resolves_to(self, address):
+		family = socket.AF_INET6 if ":" in address else socket.AF_INET
+		return patch.object(
+			socket, "getaddrinfo", return_value=[(family, socket.SOCK_STREAM, 6, "", (address, 443))]
+		)
+
+	def test_an_internal_address_is_refused_before_any_request(self):
+		for address in (
+			"10.0.0.5",
+			"127.0.0.1",
+			"169.254.169.254",
+			"192.168.1.10",
+			"100.64.0.1",
+			"::1",
+			"::ffff:10.0.0.5",
+		):
+			with self._resolves_to(address), patch.object(transport.requests, "get") as get:
+				with self.assertRaises(transport.TransportError) as caught:
+					transport.fetch_identity(CLIENT)
+			self.assertIn("internal address", str(caught.exception), address)
+			get.assert_not_called()
+
+	def test_a_public_address_is_called(self):
+		with self._resolves_to("93.184.215.14"):
+			transport.check_destination(CLIENT)
+
+	def test_local_testing_may_call_local_addresses(self):
+		with self._resolves_to("127.0.0.1"), patch.object(transport.urls, "http_allowed", return_value=True):
+			transport.check_destination("http://localhost:8001")

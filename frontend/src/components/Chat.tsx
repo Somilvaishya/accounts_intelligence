@@ -20,13 +20,16 @@ const SUGGESTIONS = [
   "Show the oldest open items",
   "Summarise where the group stands",
 ];
-// The conversation is kept in this browser only; the server stores nothing.
-const STORE = "ai-chat";
+// The conversation is kept in this browser tab only, per user: it is gone when the tab closes, and another
+// person signing in on a shared computer does not see it. The server stores nothing.
+const STORE = `ai-chat:${document.getElementById("root")?.dataset.userId || ""}`;
 const TURNS = 4;
 
 function load(): Message[] {
   try {
-    return JSON.parse(localStorage.getItem(STORE) || "[]");
+    // Earlier versions kept the conversation in localStorage, which outlives the session.
+    localStorage.removeItem("ai-chat");
+    return JSON.parse(sessionStorage.getItem(STORE) || "[]");
   } catch {
     return [];
   }
@@ -34,7 +37,7 @@ function load(): Message[] {
 
 function save(messages: Message[]) {
   try {
-    localStorage.setItem(STORE, JSON.stringify(messages.slice(-30)));
+    sessionStorage.setItem(STORE, JSON.stringify(messages.slice(-30)));
   } catch {
     // Not remembered; the chat still works.
   }

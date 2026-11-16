@@ -18,6 +18,7 @@ def get_context(context):
 		frappe.throw(_("Reconciliation runs on the group server. This site is not set up as the server."))
 	context.csrf_token = frappe.sessions.get_csrf_token()
 	context.user_name = frappe.utils.get_fullname()
+	context.user_id = frappe.session.user
 	# The CSRF token is kept in the session, which a GET request does not save on its own.
 	frappe.db.commit()  # nosemgrep
 	return context
