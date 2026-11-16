@@ -152,16 +152,3 @@ export function Network({ pairs, query }: { pairs: PairRow[]; query: string }) {
     </svg>
   );
 }
-
-/** A small progress ring for a percentage. */
-export function Ring({ value }: { value: number }) {
-  const r = 15;
-  const length = 2 * Math.PI * r;
-  return (
-    <svg viewBox="0 0 36 36" className="h-11 w-11 -rotate-90">
-      <circle cx={18} cy={18} r={r} fill="none" strokeWidth={3.5} className="stroke-sunken" />
-      <circle cx={18} cy={18} r={r} fill="none" strokeWidth={3.5} strokeLinecap="round" stroke="#10B981"
-        strokeDasharray={length} strokeDashoffset={length * (1 - value / 100)} />
-    </svg>
-  );
-}

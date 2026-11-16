@@ -99,10 +99,16 @@ export function owes(balance: number | null, holder: Company, other: Company) {
     : `${short(holder.name)} owes ${short(other.name)}`;
 }
 
+/** The document type to show and link to. An account entry is a voucher on a related-party account; its
+ * reference holds the voucher's own type. */
+export function docType(doc: Doc) {
+  return doc.doctype === "Account Entry" && doc.reference_no ? doc.reference_no : doc.doctype;
+}
+
 /** The document on the company site that holds it. */
 export function docUrl(doc: Doc, company: Company) {
   if (!company.site_url) return undefined;
-  const slug = doc.doctype.toLowerCase().replace(/ /g, "-");
+  const slug = docType(doc).toLowerCase().replace(/ /g, "-");
   return `${company.site_url.replace(/\/$/, "")}/app/${slug}/${encodeURIComponent(doc.name)}`;
 }
 

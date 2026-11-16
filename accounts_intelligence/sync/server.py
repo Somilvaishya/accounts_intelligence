@@ -8,6 +8,7 @@ document never overwrites a newer one.
 
 import hashlib
 import math
+import re
 from datetime import date, datetime
 
 import frappe
@@ -16,6 +17,7 @@ from frappe.utils import now_datetime
 from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS, audit
 from accounts_intelligence.auth.server import Rejected
 from accounts_intelligence.sync import (
+	ACCOUNT,
 	BALANCE,
 	DEFAULT_SYNC_EVERY,
 	ENTITY,
@@ -27,10 +29,12 @@ from accounts_intelligence.sync import (
 	TRANSACTION,
 	iso_date,
 	pan_of,
+	plain,
 	row_key,
 )
 
 MAX_CHECK_KEYS = 20000
+CHECK_MONTH = re.compile(r"\d{4}-\d{2}")
 MAX_DIFFERENCES = 100
 MAX_COMPANIES = 100
 MAX_SKIPPED = 20
@@ -57,6 +61,21 @@ def config_handler(request) -> dict:
 		if entity and entity.site_url != site:
 			refused.append({"company": name, "reason": "this PAN is registered to another site"})
 			continue
+		# A site is one company. Once it has registered a PAN it cannot claim others, so an approved site
+		# cannot take the PAN of a group company whose own site has not connected yet, or flood the watch list.
+		owned = [p for p, e in known.items() if e.site_url == site]
+		if not entity and owned:
+			refused.append(
+				{
+					"company": name,
+					"reason": f"this site is registered as {owned[0]}; the server admin must delete that "
+					"Accounts Intelligence Entity before it can register another company",
+				}
+			)
+			continue
+		if any(e.company_name == name and p != pan for p, e in known.items()):
+			refused.append({"company": name, "reason": "another group company already has this name"})
+			continue
 		if not entity:
 			frappe.get_doc({"doctype": ENTITY, "pan": pan, "company_name": name, "site_url": site}).insert(
 				ignore_permissions=True
@@ -64,6 +83,10 @@ def config_handler(request) -> dict:
 			known[pan] = frappe._dict(name=pan, company_name=name, site_url=site)
 		elif entity.company_name != name:
 			frappe.db.set_value(ENTITY, pan, "company_name", name)
+			audit.log(
+				"Company renamed", "Accepted", site_url=site, reason=f"{pan}: {entity.company_name} → {name}"
+			)
+			known[pan].company_name = name
 		accepted.append(pan)
 
 	if refused:
@@ -75,7 +98,7 @@ def config_handler(request) -> dict:
 	# Every client run starts here, even when it has nothing to send, so this is when the site last synced.
 	values = {"last_sync_on": now_datetime()}
 	if isinstance(request.data.get("last_result"), str):
-		values["last_result"] = request.data["last_result"][:1000]
+		values["last_result"] = plain(request.data["last_result"], 1000)
 	frappe.db.set_value(ALLOWED_SITE, request.row.name, values, update_modified=False)
 	return {
 		"ok": True,
@@ -167,11 +190,19 @@ def _check(totals, own, sync_from) -> tuple[list, str]:
 		):
 			stored[f"{row.source_doctype}|{row.entity}|{row.month}"] = [row.count, round(row.total, 2)]
 
+	# A key names a document type, one of this site's companies and a month; anything else is refused, so
+	# the keys shown in Last Daily Check are always this plain shape.
+	for key in totals:
+		doctype, _, rest = str(key).partition("|")
+		pan, _, month = rest.partition("|")
+		if doctype not in SOURCES or pan not in own or not CHECK_MONTH.fullmatch(month):
+			raise Rejected("check is not valid")
+
 	differences = []
 	for key in sorted(set(stored) | set(totals)):
 		try:
 			count, total = int(totals.get(key, [0, 0])[0]), round(_amount(totals.get(key, [0, 0])[1]), 2)
-		except (IndexError, TypeError, ValueError):
+		except (IndexError, KeyError, TypeError, ValueError):
 			raise Rejected("check is not valid")
 		server = stored.get(key, [0, 0.0])
 		if count != server[0] or abs(total - server[1]) > 0.01:
@@ -228,7 +259,7 @@ def _label(row) -> str:
 
 def _transaction(row) -> dict:
 	source_doctype = _choice(row["source_doctype"], SOURCES)
-	party_type = _choice(row["party_type"], PARTY_TYPES)
+	party_type = _choice(row["party_type"], (*PARTY_TYPES, ACCOUNT))
 	values = {
 		"entity": _text(row["entity"], required=True),
 		"counterparty": _text(row["counterparty"], required=True),
@@ -261,7 +292,7 @@ def _balance(row) -> dict:
 	values = {
 		"entity": _text(row["entity"], required=True),
 		"counterparty": _text(row["counterparty"], required=True),
-		"party_type": _choice(row["party_type"], PARTY_TYPES),
+		"party_type": _choice(row["party_type"], (*PARTY_TYPES, ACCOUNT)),
 		"party": _text(row["party"], required=True),
 		"as_of": date.fromisoformat(row["as_of"]),
 		"balance": _amount(row["balance"]),
@@ -273,7 +304,7 @@ def _balance(row) -> dict:
 
 
 def _text(value, required=False) -> str:
-	value = "" if value is None else str(value).strip()[:140]
+	value = plain(value)
 	if required and not value:
 		raise ValueError("a required value is missing")
 	return value

@@ -192,6 +192,8 @@ export interface RptRow {
   received: number;
   paid: number;
   journals: number;
+  /** Net debit of the vouchers on ledger accounts marked Is Related Party for this party. */
+  accounts: number;
   documents: number;
   /** The party's balance on the last day, debit positive: above zero the party owes the company. */
   balance: number | null;

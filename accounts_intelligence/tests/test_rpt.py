@@ -158,6 +158,11 @@ class TestRelatedParties(FrappeTestCase):
 		only_b = rpt.report("2026-04-01", "2026-09-30", company=B)["rows"]
 		self.assertEqual([(r["company"]["pan"], r["party"]["pan"]) for r in only_b], [(B, DIRECTOR)])
 
+	def test_entries_on_a_related_party_account_have_their_own_column(self):
+		_tx(A, DIRECTOR, "Account Entry", "JV-SALARY", "2026-08-31", 50000, party_type="Account")
+		row = rpt.report("2026-04-01", "2026-09-30")["rows"][0]
+		self.assertEqual((row["party"]["pan"], row["accounts"], row["journals"]), (DIRECTOR, 50000, 0))
+
 	def test_the_period_defaults_to_the_financial_year(self):
 		self.assertEqual(rpt.report(to_date="2026-02-10")["from_date"], "2025-04-01")
 		self.assertEqual(rpt.report(to_date="2026-11-12")["from_date"], "2026-04-01")

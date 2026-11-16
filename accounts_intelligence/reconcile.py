@@ -19,6 +19,7 @@ from frappe.utils import add_to_date, getdate, now_datetime
 
 from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS
 from accounts_intelligence.sync import (
+	ACCOUNT_ENTRY,
 	BALANCE,
 	DEFAULT_SYNC_EVERY,
 	ENTITY,
@@ -309,16 +310,18 @@ def _line(kind, seller, buyer, difference) -> dict:
 
 
 def _money(rows) -> list:
-	"""Payments and journal entries as the amount each debits the other company's party account.
+	"""Payments, journal entries and account entries as the amount each debits the other company's
+	accounts.
 
-	A journal entry has one row per party; its rows are added up, and one that nets to zero only moves an
-	amount between the company's customer and supplier accounts of the same group company, so it is left out.
+	A journal entry has one row per party, and a voucher one row per related-party account; the rows of one
+	voucher are added up. One that nets to zero only moves an amount between the company's own accounts for
+	the same group company (customer, supplier, a loan account), so it is left out.
 	"""
 	money, journals = [], {}
 	for row in rows:
 		if row.source_doctype == "Payment Entry":
 			money.append(frappe._dict(row, amount=row.amount if row.payment_type == "Pay" else -row.amount))
-		elif row.source_doctype == "Journal Entry":
+		elif row.source_doctype in ("Journal Entry", ACCOUNT_ENTRY):
 			journal = journals.setdefault(row.source_name, frappe._dict(row, amount=0.0, party=[]))
 			journal.amount += row.amount
 			journal.party.append(row.party)

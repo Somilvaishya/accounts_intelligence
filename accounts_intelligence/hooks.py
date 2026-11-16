@@ -261,3 +261,10 @@ scheduler_events = {
 
 # The reconciliation frontend (frontend/) is a single page app: every path under /intelligence serves it.
 website_route_rules = [{"from_route": "/intelligence/<path:app_path>", "to_route": "intelligence"}]
+
+# Is Related Party and Related Party PAN on Account (account.py). Added on install and kept current on every
+# migrate; removed on uninstall.
+after_install = "accounts_intelligence.account.setup"
+after_migrate = ["accounts_intelligence.account.setup"]
+before_uninstall = "accounts_intelligence.account.remove"
+doc_events = {"Account": {"validate": "accounts_intelligence.account.validate"}}

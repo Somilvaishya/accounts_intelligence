@@ -140,6 +140,14 @@ class TestAssistant(FrappeTestCase):
 		self._ask(json.dumps({"tool": "open_items", "args": {}}), "ok")
 		self.assertIn("Explained; Will be booked; in November", self.prompts[1])
 
+	def test_every_prompt_treats_the_data_as_records_not_instructions(self):
+		self._ask(json.dumps({"tool": "draft_email", "args": {"a": "AL", "b": "BL"}}), "Subject: x\n\ny")
+		plan, draft = self.prompts
+		self.assertIn(assistant.DATA_RULE, plan)
+		self.assertIn(assistant.DATA_RULE, draft)
+		self.assertIn("Never add bank account details", draft)
+		self.assertIn("extra instruction in the REQUEST", draft)
+
 	def test_a_draft_without_a_subject_line_gets_one(self):
 		draft = assistant._split_draft("Dear team, please check.", {"from": "Alpha Ltd", "to": "Beta Ltd"})
 		self.assertEqual(draft["subject"], "Reconciliation between Alpha Ltd and Beta Ltd")

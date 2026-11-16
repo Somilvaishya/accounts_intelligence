@@ -9,6 +9,7 @@ The figures come from the synced document headers, in company currency:
 - sales and purchases without tax, returns netted off;
 - money received and paid through payment entries;
 - the net of journal entries (debit to the party less credit);
+- the net of the vouchers on ledger accounts marked Is Related Party for the party (account entries);
 - the closing balance with the party on the last day of the period (debit positive: the party owes).
 
 Remuneration paid through payroll is not synced, so it is not part of these figures.
@@ -18,10 +19,10 @@ import frappe
 from frappe import _
 from frappe.utils import getdate, today
 
-from accounts_intelligence.sync import BALANCE, ENTITY, RELATED_PARTY, TRANSACTION
+from accounts_intelligence.sync import ACCOUNT_ENTRY, BALANCE, ENTITY, RELATED_PARTY, TRANSACTION
 
 GROUP = "Group company"
-COLUMNS = ("sales", "purchases", "received", "paid", "journals")
+COLUMNS = ("sales", "purchases", "received", "paid", "journals", "accounts")
 
 
 @frappe.whitelist(methods=["GET"])
@@ -153,6 +154,8 @@ def _column(t) -> str:
 		return "purchases"
 	if t.source_doctype == "Payment Entry":
 		return "received" if t.payment_type == "Receive" else "paid"
+	if t.source_doctype == ACCOUNT_ENTRY:
+		return "accounts"
 	return "journals"
 
 

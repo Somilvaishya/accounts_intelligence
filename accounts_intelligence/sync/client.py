@@ -1,8 +1,8 @@
 """Client side of data sync: send the headers of documents with other group companies to the server.
 
 A run fetches the watch list (every group company's PAN) and the sync rules, then, for each source doctype,
-sends the documents changed since its watermark whose party is a group company, then the party balances
-that changed. A watermark only moves after the server's signed reply accepts the batch, so a failed run
+sends the documents changed since its watermark whose party is a group company, and the vouchers on ledger
+accounts marked Is Related Party with a watched PAN, then the balances that changed. A watermark only moves after the server's signed reply accepts the batch, so a failed run
 sends the same rows again next time, which the server's upsert makes harmless. Nothing is queued or
 stored apart from the small state in Settings.
 """
@@ -16,8 +16,11 @@ import frappe
 from frappe.utils import add_to_date, flt, get_datetime, get_last_day, now_datetime, today
 from frappe.utils.password import get_decrypted_password
 
+from accounts_intelligence import account
 from accounts_intelligence.auth import SETTINGS, transport
 from accounts_intelligence.sync import (
+	ACCOUNT,
+	ACCOUNT_ENTRY,
 	DEFAULT_SYNC_EVERY,
 	MAX_ROWS,
 	PARTY_TYPES,
@@ -90,6 +93,9 @@ def _run(settings, deadline) -> str:
 		watch = set(state.get("watch", [])) - set(companies.values())
 		parties = watched_parties(watch)
 		notes += unmatched_names(state.get("names", {}), watch, parties)
+		accounts, account_notes = watched_accounts(watch, companies)
+		parties.update(accounts)
+		notes += account_notes
 		if companies and parties:
 			for doctype in SOURCES:
 				more = True
@@ -216,6 +222,29 @@ def watched_parties(watch: set) -> dict:
 	return result
 
 
+def watched_accounts(watch: set, companies: dict) -> tuple[dict, list]:
+	"""Ledger accounts of this site's company marked Is Related Party whose PAN is watched, as
+	{("Account", account): (pan, account name)}, and a note for each marked account whose PAN is not."""
+	if not companies or not frappe.get_meta("Account").has_field(account.FLAG):
+		return {}, []
+	result, notes = {}, []
+	for row in frappe.get_all(
+		"Account",
+		{"company": ("in", list(companies)), account.FLAG: 1, "is_group": 0},
+		["name", "account_name", account.PAN],
+	):
+		pan = pan_of(row.get(account.PAN))
+		if pan in watch:
+			result[(ACCOUNT, row.name)] = (pan, row.account_name or row.name)
+		else:
+			notes.append(
+				f"Account {row.name} is marked as a related party with PAN {row.get(account.PAN) or '(none)'}, "
+				"which is not a group company or in the group's related-party register, so its entries are "
+				"not sent"
+			)
+	return result, notes
+
+
 SUFFIXES = re.compile(r"\b(m s|private|pvt|limited|ltd|llp|co|company|corporation)\b")
 
 
@@ -266,8 +295,9 @@ def collect(
 	"""Rows changed after the watermark and posted between sync_from and until, the watermark of the
 	last document included, and whether more documents may follow."""
 	modified, name = watermark or START
-	# A journal entry can expand to a row per party, so fewer are read at a time to stay under MAX_ROWS.
-	limit = JOURNAL_LIMIT if doctype == "Journal Entry" else MAX_ROWS
+	# A journal entry or a voucher can expand to a row per party or account, so fewer are read at a time
+	# to stay under MAX_ROWS.
+	limit = JOURNAL_LIMIT if doctype in ("Journal Entry", ACCOUNT_ENTRY) else MAX_ROWS
 	params = {
 		**_filters(companies, parties, sync_from),
 		"until": until or "9999-12-31",
@@ -283,8 +313,12 @@ def collect(
 	if not headers:
 		return [], None, False
 	more = len(headers) == limit
+	# The watermark is the last record read, before rows are expanded or grouped.
+	last = headers[-1]
 	if doctype == "Journal Entry":
 		headers = _journal_parties(headers, params)
+	elif doctype == ACCOUNT_ENTRY:
+		headers = _account_entries(headers, params)
 	currency = dict(frappe.get_all("Company", fields=["name", "default_currency"], as_list=True))
 
 	rows = []
@@ -313,7 +347,6 @@ def collect(
 				"source_modified": str(d.modified),
 			}
 		)
-	last = headers[-1]
 	return rows, [str(last.modified), last.name], more
 
 
@@ -321,6 +354,10 @@ PARTY_FILTER = (
 	"(({p}party_type = 'Customer' and {p}party in %(customers)s)"
 	" or ({p}party_type = 'Supplier' and {p}party in %(suppliers)s))"
 )
+# A ledger line on a related-party account that also names a watched customer or supplier is already sent
+# with that party's document, so account entries leave it out. coalesce, because the party is often empty.
+NOT_WATCHED_PARTY = "coalesce(" + PARTY_FILTER.format(p="d.") + ", 0) = 0"
+ACCOUNT_LINES = "d.company in %(companies)s and d.account in %(accounts)s and d.posting_date >= %(sync_from)s"
 QUERIES = {
 	"Sales Invoice": """
 		select d.name, d.company, d.posting_date, 'Customer' as party_type, d.customer as party, d.is_return,
@@ -358,7 +395,32 @@ QUERIES = {
 	+ PARTY_FILTER.format(p="a.")
 	+ """)
 		order by d.modified, d.name limit %(limit)s""",
+	# Ledger lines are read here; _account_entries then gives one row per voucher and account. Cancelling a
+	# voucher updates its lines' modified, so a cancellation is picked up too.
+	ACCOUNT_ENTRY: """
+		select d.name, d.modified, d.voucher_no
+		from `tabGL Entry` d
+		where d.company in %(companies)s and d.account in %(accounts)s and {after}
+		order by d.modified, d.name limit %(limit)s""",
 }
+
+
+def _account_entries(lines, params) -> list:
+	"""One row per voucher and related-party account: the net debit on the account in company currency,
+	the voucher type as its reference, and cancelled when every line of it is."""
+	return frappe.db.sql(
+		f"""
+		select d.voucher_no as name, d.voucher_type as reference_no, d.company, '{ACCOUNT}' as party_type,
+			d.account as party, min(d.posting_date) as posting_date, max(d.modified) as modified,
+			if(min(d.is_cancelled) = 1, 2, 1) as docstatus,
+			sum(if(d.is_cancelled = 0, d.debit - d.credit, 0)) as grand_total,
+			sum(if(d.is_cancelled = 0, d.debit - d.credit, 0)) as base_grand_total
+		from `tabGL Entry` d
+		where d.voucher_no in %(vouchers)s and {ACCOUNT_LINES} and {NOT_WATCHED_PARTY}
+		group by d.voucher_type, d.voucher_no, d.company, d.account""",
+		{**params, "vouchers": tuple({line.voucher_no for line in lines})},
+		as_dict=True,
+	)
 
 
 def _journal_parties(headers, params) -> list:
@@ -423,7 +485,10 @@ def _send_balances(settings, state, companies, parties, notes) -> int:
 
 
 def party_balances(companies, parties) -> list:
-	return frappe.db.sql(
+	"""The balance with each watched customer and supplier, and on each watched related-party account
+	(leaving out its lines that name a watched party, which are in that party's balance already)."""
+	params = _filters(companies, parties)
+	balances = frappe.db.sql(
 		"""
 		select g.company, g.party_type, g.party, sum(g.debit) - sum(g.credit) as balance
 		from `tabGL Entry` g
@@ -431,7 +496,17 @@ def party_balances(companies, parties) -> list:
 		+ PARTY_FILTER.format(p="g.")
 		+ """
 		group by g.company, g.party_type, g.party""",
-		_filters(companies, parties),
+		params,
+		as_dict=True,
+	)
+	return balances + frappe.db.sql(
+		f"""
+		select d.company, '{ACCOUNT}' as party_type, d.account as party, sum(d.debit) - sum(d.credit) as balance
+		from `tabGL Entry` d
+		where d.is_cancelled = 0 and d.company in %(companies)s and d.account in %(accounts)s
+			and {NOT_WATCHED_PARTY}
+		group by d.company, d.account""",
+		params,
 		as_dict=True,
 	)
 
@@ -442,6 +517,7 @@ def _filters(companies, parties, sync_from=None) -> dict:
 		"companies": tuple(companies),
 		"customers": tuple(p for t, p in parties if t == "Customer") or ("",),
 		"suppliers": tuple(p for t, p in parties if t == "Supplier") or ("",),
+		"accounts": tuple(p for t, p in parties if t == ACCOUNT) or ("",),
 		"sync_from": sync_from or "1900-01-01",
 	}
 
@@ -520,6 +596,15 @@ TOTAL_QUERIES = {
 			join `tabJournal Entry Account` a on a.parent = d.name and a.parenttype = 'Journal Entry'
 			where {SUBMITTED} and {PARTY_FILTER.format(p="a.")}
 			group by d.name, a.party_type, a.party
+		) x group by x.company, x.month""",
+	# One synced row per voucher and account, grouped as _account_entries does.
+	ACCOUNT_ENTRY: f"""
+		select x.company, x.month, count(*) as count, sum(x.net) as total from (
+			select d.company, date_format(min(d.posting_date), '%%Y-%%m') as month,
+				sum(if(d.is_cancelled = 0, d.debit - d.credit, 0)) as net
+			from `tabGL Entry` d
+			where {ACCOUNT_LINES} and {NOT_WATCHED_PARTY}
+			group by d.voucher_type, d.voucher_no, d.company, d.account
 		) x group by x.company, x.month""",
 }
 

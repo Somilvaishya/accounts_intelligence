@@ -120,6 +120,8 @@ class TestFloodProtection(FrappeTestCase):
 	def setUp(self):
 		_reset_settings(row_status="Active", row_key=keys.generate_keypair()[1])
 		clear_counters()
+		# Rows written by the other tests of this class are not rolled back between tests.
+		frappe.db.delete(AUTH_LOG, {"event": ("in", ("Cap test", "Flood test"))})
 
 	def tearDown(self):
 		clear_counters()
@@ -136,15 +138,52 @@ class TestFloodProtection(FrappeTestCase):
 		reasons = frappe.get_all(AUTH_LOG, {"event": "Flood test"}, pluck="reason", order_by="creation")
 		self.assertIn("seen 10 times", reasons[-1])
 
-	def test_endpoint_cap_answers_429_without_checking_the_request(self):
+	def _handle(self, verified, handler=server.ping_handler, limit=2):
+		"""Call handle with verification stubbed: `verified` is a request that passed, or None for refused."""
 		frappe.local.request = EnvironBuilder(path=CONNECT, method="POST", data=b"{}").get_request()
 		frappe.local.response = frappe._dict()
-		with patch.object(server, "verify_request", side_effect=server.Rejected("test")) as verify:
-			replies = [server.handle("Cap test", server.ping_handler, limit_per_minute=2) for _ in range(3)]
-		self.assertEqual(replies[0]["error"], "not_authorised")
+		verify = (
+			{"return_value": verified}
+			if verified
+			else {"side_effect": server.Rejected("signature does not match")}
+		)
+		with (
+			patch.object(server, "verify_request", **verify),
+			patch.object(server, "get_decrypted_password", return_value="key"),
+			patch.object(signing, "sign_response", return_value={"ok": True}),
+		):
+			return server.handle("Cap test", handler, limit_per_minute=limit)
+
+	def _verified(self, site=CLIENT):
+		row = frappe._dict(name="row", site_url=site)
+		return server.SignedRequest(row=row, data={}, public_key=keys.generate_keypair()[1], nonce="a" * 32)
+
+	def test_refused_requests_share_a_cap_and_are_not_logged_past_it(self):
+		replies = [self._handle(None) for _ in range(4)]
+		self.assertEqual([r["error"] for r in replies], ["not_authorised"] * 2 + ["rate_limited"] * 2)
+		self.assertEqual(
+			frappe.db.count(AUTH_LOG, {"event": "Cap test"}), 1, "one row, then collapsed or capped"
+		)
+
+	def test_a_flood_of_refused_requests_does_not_block_a_verified_site(self):
+		for _ in range(5):
+			self._handle(None)
+		self.assertEqual(self._handle(self._verified()), {"ok": True}, "its own budget is untouched")
+
+	def test_each_verified_site_has_its_own_budget(self):
+		replies = [self._handle(self._verified()) for _ in range(3)]
 		self.assertEqual(replies[2], {"ok": False, "error": "rate_limited"})
 		self.assertEqual(frappe.local.response.get("http_status_code"), 429)
-		self.assertEqual(verify.call_count, 2)
+		self.assertEqual(self._handle(self._verified("https://other.example.com")), {"ok": True})
+
+	def test_a_refusal_inside_the_handler_undoes_its_writes(self):
+		def handler(request):
+			frappe.db.set_single_value(SETTINGS, "sync_every", "1 day")
+			raise server.Rejected("check is not valid")
+
+		frappe.db.set_single_value(SETTINGS, "sync_every", "15 minutes")
+		self.assertEqual(self._handle(self._verified(), handler)["error"], "not_authorised")
+		self.assertEqual(frappe.db.get_single_value(SETTINGS, "sync_every"), "15 minutes")
 
 
 class TestAuthLogIndexes(FrappeTestCase):

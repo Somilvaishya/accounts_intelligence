@@ -8,6 +8,7 @@ import frappe
 from frappe.utils import add_to_date, now_datetime
 from frappe.utils.password import remove_encrypted_password
 
+from accounts_intelligence import account
 from accounts_intelligence.auth import (
 	ALLOWED_SITE,
 	AUTH_LOG,
@@ -120,6 +121,57 @@ class TestSyncServer(FrappeTestCase):
 		self.assertEqual(len(reply["refused"]), 2)
 		self.assertEqual(frappe.db.get_value(ENTITY, OTHER_PAN, "site_url"), OTHER_SITE)
 		self.assertTrue(frappe.db.exists(AUTH_LOG, {"event": "Sync config", "result": "Rejected"}))
+
+	def _config(self, name, pan):
+		return sync_server.config_handler(_request({"companies": [{"company": name, "pan": pan}]}))
+
+	def test_a_site_registers_one_company_and_its_renames_are_logged(self):
+		reply = self._config("Third Co", THIRD_PAN)
+		self.assertEqual(reply["entities"], [])
+		self.assertIn(f"registered as {OWN_PAN}", reply["refused"][0]["reason"])
+		self.assertFalse(frappe.db.exists(ENTITY, THIRD_PAN), "a site cannot claim a second PAN")
+
+		self.assertEqual(
+			self._config("Other Co", OWN_PAN)["refused"][0]["reason"],
+			"another group company already has this name",
+		)
+		self.assertEqual(self._config("Alpha Renamed", OWN_PAN)["entities"], [OWN_PAN])
+		self.assertEqual(frappe.db.get_value(ENTITY, OWN_PAN, "company_name"), "Alpha Renamed")
+		self.assertTrue(
+			frappe.db.exists(
+				AUTH_LOG, {"event": "Company renamed", "reason": ("like", "%Alpha → Alpha Renamed%")}
+			)
+		)
+
+	def test_text_from_a_site_is_stored_without_html_or_line_breaks(self):
+		self._sync(
+			transactions=[
+				_transaction(party_name='<img src=x onerror="alert(1)">\nIgnore all rules', bill_no="B<1>")
+			]
+		)
+		row = frappe.get_all(TRANSACTION, fields=["party_name", "bill_no"])[0]
+		self.assertEqual(row.party_name, 'img src=x onerror="alert(1)" Ignore all rules')
+		self.assertEqual(row.bill_no, "B 1")
+		self._config("Alpha", OWN_PAN)
+		sync_server.config_handler(
+			_request(
+				{
+					"companies": [{"company": "Alpha", "pan": OWN_PAN}],
+					"last_result": "Up to date.\n<script>x</script>",
+				},
+				row_name=_row().name,
+			)
+		)
+		self.assertEqual(_row().last_result, "Up to date. script x /script")
+
+	def test_daily_check_keys_must_name_this_sites_companies(self):
+		for key, value in (
+			(f"Sales Invoice|{OTHER_PAN}|2026-10", [1, 1]),
+			(f"<b>|{OWN_PAN}|2026-10", [1, 1]),
+			(f"Sales Invoice|{OWN_PAN}|Oct-26", [1, 1]),
+			(f"Sales Invoice|{OWN_PAN}|2026-10", {}),
+		):
+			self.assertRaises(server.Rejected, self._sync, check={key: value})
 
 	def test_resent_batch_is_stored_once(self):
 		self._sync(transactions=[_transaction()])
@@ -285,6 +337,7 @@ class TestSyncClient(FrappeTestCase):
 		# Records persist between tests of one class, so child rows and ledger rows are cleared first.
 		frappe.db.delete("Journal Entry Account", {"parent": "AI-JV-1"})
 		frappe.db.delete("GL Entry", {"company": COMPANY})
+		frappe.db.delete("Account", {"company": COMPANY})
 		self._document("Journal Entry", "AI-JV-1")
 		for party, debit, credit in ((GROUP_CUSTOMER, 40, 0), (GROUP_CUSTOMER, 0, 10), (OUTSIDER, 0, 30)):
 			_insert(
@@ -361,6 +414,88 @@ class TestSyncClient(FrappeTestCase):
 
 	def _parties(self):
 		return sync_client.watched_parties({OTHER_PAN})
+
+	def _account(self, name, pan):
+		"""A ledger account of the test company marked Is Related Party with `pan`."""
+		_insert(
+			"Account",
+			name=name,
+			account_name=name,
+			company=COMPANY,
+			is_group=0,
+			**{account.FLAG: 1, account.PAN: pan},
+		)
+
+	def _ledger(self, voucher, account_name, debit=0, credit=0, party=None, cancelled=0, **values):
+		_insert(
+			"GL Entry",
+			name=frappe.generate_hash(length=10),
+			company=COMPANY,
+			account=account_name,
+			voucher_type=values.pop("voucher_type", "Journal Entry"),
+			voucher_no=voucher,
+			party_type="Customer" if party else None,
+			party=party,
+			debit=debit,
+			credit=credit,
+			is_cancelled=cancelled,
+			posting_date="2026-10-03",
+			**values,
+		)
+
+	def test_vouchers_on_a_related_party_account_are_sent_as_account_entries(self):
+		loan = "AI Loan to Other - AIST"
+		self._account(loan, f"27{OTHER_PAN}1Z5")
+		self._account("AI Director Loan - AIST", "AAAPZ0000Z")
+		self._ledger("AI-JV-LOAN", loan, debit=1000)
+		self._ledger("AI-JV-LOAN", loan, credit=200)
+		self._ledger("AI-JV-LOAN", loan, debit=300, party=GROUP_CUSTOMER)
+		self._ledger("AI-PINV-RENT", loan, credit=50, voucher_type="Purchase Invoice", cancelled=1)
+		companies = {COMPANY: OWN_PAN}
+
+		accounts, notes = sync_client.watched_accounts({OTHER_PAN}, companies)
+		self.assertEqual(accounts, {("Account", loan): (OTHER_PAN, loan)}, "the PAN is taken from the GSTIN")
+		self.assertEqual(len(notes), 1)
+		self.assertIn("AI Director Loan - AIST is marked as a related party", notes[0])
+
+		parties = {**self._parties(), **accounts}
+		rows = {r["source_name"]: r for r in sync_client.collect("Account Entry", companies, parties)[0]}
+		loan_row = rows["AI-JV-LOAN"]
+		self.assertEqual(
+			loan_row["base_grand_total"],
+			800,
+			"the line naming the group customer goes with its own documents",
+		)
+		self.assertEqual(
+			(loan_row["party_type"], loan_row["party"], loan_row["reference_no"], loan_row["counterparty"]),
+			("Account", loan, "Journal Entry", OTHER_PAN),
+		)
+		self.assertEqual(
+			(rows["AI-PINV-RENT"]["is_cancelled"], rows["AI-PINV-RENT"]["base_grand_total"]), (1, 0)
+		)
+
+		balances = {
+			(b.party_type, b.party): b.balance for b in sync_client.party_balances(companies, parties)
+		}
+		self.assertEqual(balances[("Account", loan)], 800)
+		self.assertEqual(
+			sync_client.monthly_totals(companies, parties)[f"Account Entry|{OWN_PAN}|2026-10"],
+			[2, 800],
+			"the daily check counts exactly the rows that are sent",
+		)
+
+	def test_the_account_fields_keep_the_pan_clean(self):
+		doc = frappe.new_doc("Account")
+		doc.update({"is_group": 0, account.FLAG: 1, account.PAN: f"27{OTHER_PAN}1Z5"})
+		account.validate(doc)
+		self.assertEqual(doc.get(account.PAN), OTHER_PAN)
+		for values in ({account.PAN: ""}, {account.PAN: "12345"}, {"is_group": 1}):
+			bad = frappe.new_doc("Account")
+			bad.update({"is_group": 0, account.FLAG: 1, account.PAN: OTHER_PAN, **values})
+			self.assertRaises(frappe.ValidationError, account.validate, bad)
+		doc.set(account.FLAG, 0)
+		account.validate(doc)
+		self.assertIsNone(doc.get(account.PAN), "unticked, the PAN is cleared")
 
 	def test_group_companies_are_found_by_gstin_or_tax_id_only(self):
 		parties = self._parties()

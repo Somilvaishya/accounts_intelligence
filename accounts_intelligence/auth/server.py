@@ -39,24 +39,31 @@ class SignedRequest:
 def handle(event: str, handler, connect=False, limit_per_minute=600, log_accepted=True):
 	"""Verify the current request, run the handler, and sign its result for the caller.
 
-	`limit_per_minute` caps the endpoint for all callers together. Frappe's per-IP limit relies on
-	X-Forwarded-For, which a caller can set, so this cap is what bounds a flood.
+	`limit_per_minute` is spent in two separate budgets. Every verified site has its own, and refused
+	requests share one per endpoint. Frappe's per-IP limit relies on X-Forwarded-For, which a caller can
+	set, so these budgets are what bound a flood, and a flood of bad requests cannot use up the budget of
+	the sites that sign correctly.
 
-	Refused and failed requests are always logged. `log_accepted=False` skips the log row for a request
-	that succeeded, for routine calls whose success the site row's Last Seen already records.
+	Refused and failed requests are always logged, and anything the handler wrote before is undone.
+	`log_accepted=False` skips the log row for a request that succeeded, for routine calls whose success
+	the site row's Last Seen already records.
 	"""
 	claimed_site = (frappe.get_request_header(signing.HEADER_SITE) or "")[:140]
-	if over_limit(event, limit_per_minute):
-		audit.log_rejection(event, claimed_site, "endpoint limit reached")
-		return throttled()
 	try:
 		frappe.db.savepoint(HANDLER_SAVEPOINT)
 		request = verify_request(connect=connect)
+		if over_limit(f"{event}:{request.row.site_url}", limit_per_minute):
+			frappe.db.rollback(save_point=HANDLER_SAVEPOINT)
+			audit.log_rejection(event, request.row.site_url, "site limit reached")
+			return throttled()
 		private_key = get_decrypted_password(SETTINGS, SETTINGS, "private_key", raise_exception=False)
 		if not private_key:
 			raise Rejected("this server has no private key")
 		result = handler(request)
 	except Rejected as e:
+		frappe.db.rollback(save_point=HANDLER_SAVEPOINT)
+		if over_limit(f"{event}:refused", limit_per_minute):
+			return throttled()
 		audit.log_rejection(event, claimed_site, e.reason)
 		return deny()
 	except Exception:
@@ -88,7 +95,7 @@ def throttled():
 
 
 def over_limit(event: str, limit_per_minute: int) -> bool:
-	"""Count a request against a one-minute window shared by every caller of this endpoint."""
+	"""Count a request against a one-minute window for `event` (an endpoint, with a site or "refused")."""
 	window = int(time.time() // 60)
 	key = frappe.cache.make_key(f"accounts_intelligence:limit:{event}:{window}")
 	frappe.cache.set(key, 0, ex=120, nx=True)
