@@ -40,6 +40,7 @@ There are **no integration users, no API keys and no shared secrets**. The only 
 - **Replies are signed too.** Each reply is bound to the request's nonce, so the client can verify that it came from the pinned server key and belongs to that request.
 - **Every rejection looks the same.** The caller always gets HTTP 401 `not_authorised`. The real reason is written only to the **Accounts Intelligence Auth Log** on the server, which keeps refusals and other events for 180 days. Routine successes are kept short: an accepted ping is not logged (the site row's Last Seen records it), and accepted sync calls are cleared after 7 days by a daily job.
 - **HTTPS only in production.** Plain `http://` is accepted only when the "Allow Plain HTTP (Testing Only)" switch is on **and** the bench is in developer mode.
+- **Public addresses only.** Before calling another site, a site resolves its address and refuses it if it points to a private, loopback or other internal IP, so a client that controls its own DNS cannot point the server at its internal network. Local testing on 127.0.0.1 or localhost is allowed under the same conditions as plain HTTP.
 
 A captured request cannot be altered, replayed, or sent to another server or endpoint.
 
@@ -254,7 +255,7 @@ Each list item gives the document number, date and amount, with both balances ab
 - Amounts and who owes whom reach the model already worked out, so it does no arithmetic.
 - An unknown tool, company or argument is refused rather than guessed.
 - Only a System Manager can ask, and nothing is written.
-- The conversation is kept in the browser, and the last few turns go back with each question for follow-ups.
+- The conversation is kept in the browser tab, per user: it is gone when the tab closes, and someone else signing in on a shared computer does not see it. The last few turns go back with each question for follow-ups.
 
 Endpoints: `accounts_intelligence.assistant.status` (GET) and `accounts_intelligence.assistant.ask` (POST).
 
@@ -450,7 +451,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 137 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 140 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;

@@ -19,7 +19,7 @@
 </head>
 <body>
   <!-- www/intelligence.py fills these in when the bench serves the built page. -->
-  <div id="root" data-user="{{ user_name|e }}"></div>
+  <div id="root" data-user="{{ user_name|e }}" data-user-id="{{ user_id|e }}"></div>
   <script>
     window.csrf_token = "{{ csrf_token }}";
   </script>

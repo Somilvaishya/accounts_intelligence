@@ -1,11 +1,16 @@
-"""Outbound HTTPS calls between sites. Redirects are never followed and replies are size-capped."""
+"""Outbound HTTPS calls between sites. Redirects are never followed, replies are size-capped, and outside
+local testing only public addresses are called."""
 
+import ipaddress
 import json
+import socket
+from urllib.parse import urlsplit
 
+import frappe
 import requests
 from frappe import _
 
-from accounts_intelligence.auth import keys, signing
+from accounts_intelligence.auth import SETTINGS, keys, signing, urls
 
 IDENTITY_PATH = "/api/method/accounts_intelligence.api.identity"
 METHOD_PATH = "/api/method/accounts_intelligence.api.{0}"
@@ -27,8 +32,38 @@ class NotAuthorised(Refused):
 	pass
 
 
+def check_destination(base_url: str):
+	"""Refuse a site whose host resolves to an address that is not on the public internet.
+
+	The server calls a client's address when it connects or rotates its key. A client controls its own DNS,
+	so without this it could point that call at the server's private network. Local testing, where sites
+	talk over 127.0.0.1 and localhost on purpose, is allowed when plain HTTP is (switch on and developer
+	mode). A host that does not resolve is left to the request itself, which then fails as unreachable.
+	The check resolves the name once more than the request does, which narrows but does not close a DNS
+	rebinding window."""
+	if urls.http_allowed(frappe.db.get_single_value(SETTINGS, "allow_http_for_testing")):
+		return
+	parts = urlsplit(base_url)
+	try:
+		resolved = socket.getaddrinfo(parts.hostname, parts.port or 443, type=socket.SOCK_STREAM)
+	except (socket.gaierror, UnicodeError):
+		return
+	for info in resolved:
+		# info is (family, type, proto, canonname, sockaddr), and sockaddr starts with the address.
+		address = ipaddress.ip_address(info[4][0].split("%")[0])
+		if address.version == 6 and address.ipv4_mapped:
+			address = address.ipv4_mapped
+		if not address.is_global:
+			raise TransportError(
+				_("{0} points to an internal address ({1}). Only public addresses can be called.").format(
+					base_url, address
+				)
+			)
+
+
 def fetch_identity(base_url: str) -> dict:
 	"""Read a site's published public identity over HTTPS."""
+	check_destination(base_url)
 	try:
 		response = requests.get(
 			base_url + IDENTITY_PATH,
@@ -63,6 +98,7 @@ def post_signed(settings, method: str, data: dict, nonce=None, key_pair=None) ->
 	headers = signing.sign_request(
 		private_key, public_key, "POST", path, settings.server_url, settings.site_url, body, nonce=nonce
 	)
+	check_destination(settings.server_url)
 	try:
 		response = requests.post(
 			settings.server_url + path,
