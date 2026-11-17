@@ -235,7 +235,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-06 18:30:00.000000",
+ "modified": "2026-11-17 07:36:13.466880",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Settings",
@@ -245,6 +245,12 @@
    "create": 1,
    "read": 1,
    "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Accounts Intelligence Manager",
    "write": 1
   }
  ],

@@ -108,7 +108,7 @@
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-11-12 12:00:00.000000",
+ "modified": "2026-11-17 07:36:13.466401",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Open Item",
@@ -120,6 +120,19 @@
    "read": 1,
    "report": 1,
    "role": "System Manager",
+   "write": 1
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Intelligence User"
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Intelligence Manager",
    "write": 1
   }
  ],

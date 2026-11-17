@@ -92,7 +92,7 @@ POST
 
 Besides the per-IP limit, every endpoint except identity has a budget per minute (connect 60, ping 600, rotate_key 60, sync_config 120, sync 1,200). Each verified site has its own budget, and refused requests share one; past it they get HTTP 429 and are not logged. A flood of bad requests therefore cannot block the sites that sign correctly.
 
-The buttons on the settings form call `accounts_intelligence.auth.admin.*` and need the System Manager role.
+The buttons on the settings form call `accounts_intelligence.auth.admin.*` and need the System Manager or Accounts Intelligence Manager role.
 
 ## How data sync works
 
@@ -148,12 +148,18 @@ Each line is **Matched**, **Amount differs**, **Date differs**, or **Only at** o
 
 Over the whole history, the open lines should explain the balance difference. What they do not explain is shown as **Unexplained**: documents older than the sync start date, or entries booked against a party that has no PAN.
 
-**The frontend.** On the server, open `/intelligence` (System Manager only).
+**Who can use it.** The app creates two roles on install and migrate:
+- **Accounts Intelligence Manager:** everything in the app (settings, keys, connecting and approving sites, the related-party register, the auth log, and the reconciliation) without the rest of a System Manager's reach.
+- **Accounts Intelligence User:** the reconciliation on the group server (dashboard, pairs, related parties, open items, sync health and the assistant), reviewing open items, and read, report and export on the synced data. No settings or keys.
+
+A System Manager can do everything, as before. All three see the Accounts Intelligence tile on the apps screen, which opens the dashboard: on a company site it sends them to the group server's dashboard, where they sign in (a manager goes to the settings while the site is not connected yet).
+
+**The frontend.** On the server, open `/intelligence`, or the Accounts Intelligence tile on the apps screen.
 - **Dashboard:** the total balance gap, open items and unexplained amount; charts of the gap per company pair, lines per month, open items by age and the group as a network; then every pair with its matched and open counts. The sidebar lists the pairs and shows how the company sites are syncing.
 - **Pair page:** both companies' balances, what makes up the difference, open items by age, then every line side by side, filtered by status, type, period or text, with a CSV download. Each document links to the company site that holds it.
 - Light and dark themes, and the assistant in a side panel.
 
-It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET and System Manager only.
+It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET, for the roles above.
 
 ### Sync health
 
@@ -182,7 +188,7 @@ It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `account
 
 Each warning clears on the site's next run once it is fixed there.
 
-Endpoint: `accounts_intelligence.health.sites` (GET, System Manager only).
+Endpoint: `accounts_intelligence.health.sites` (GET, for the roles above).
 
 ### Open items
 
@@ -196,14 +202,14 @@ Endpoint: `accounts_intelligence.health.sites` (GET, System Manager only).
 - the amount at stake.
 
 **Actions on a line:**
-- **Assign** it to a System Manager.
+- **Assign** it to a System Manager or a holder of either app role.
 - Mark it **In progress**.
 - **Explain** it with a reason (timing difference, booked under another party, will be booked, disputed, not an inter-company transaction, other) and a note.
 - **Ask AI** about it.
 
 **How reviews are stored.** The lines are still worked out by the reconciliation. Only a review someone saves is stored, in **Accounts Intelligence Open Item**, keyed by the line's pair and documents, with its change history. An explained line still counts as open, because the two books still differ. The pair page shows its review, and the dashboard counts it as explained.
 
-Endpoints: `accounts_intelligence.open_items.items` (GET) and `accounts_intelligence.open_items.review` (POST), System Manager only.
+Endpoints: `accounts_intelligence.open_items.items` (GET) and `accounts_intelligence.open_items.review` (POST), for the roles above.
 
 ## Related-party transactions
 
@@ -226,7 +232,7 @@ The register drives the sync. Each client watches the PANs of its own related pa
 
 Cancelled documents are left out. Transactions outside a party's Related From / Until dates are left out. Remuneration paid through payroll is not synced, so it is not included.
 
-Endpoint: `accounts_intelligence.rpt.report` (GET, System Manager only).
+Endpoint: `accounts_intelligence.rpt.report` (GET, for the roles above).
 
 ## The assistant
 
@@ -254,7 +260,7 @@ Each list item gives the document number, date and amount, with both balances ab
 - The model never writes a query, and sees nothing but the tool's result.
 - Amounts and who owes whom reach the model already worked out, so it does no arithmetic.
 - An unknown tool, company or argument is refused rather than guessed.
-- Only a System Manager can ask, and nothing is written.
+- Only the roles above can ask, and nothing is written.
 - The conversation is kept in the browser tab, per user: it is gone when the tab closes, and someone else signing in on a shared computer does not see it. The last few turns go back with each question for follow-ups.
 
 Endpoints: `accounts_intelligence.assistant.status` (GET) and `accounts_intelligence.assistant.ask` (POST).
@@ -399,7 +405,8 @@ accounts_intelligence/
   open_items.py           the open items work queue and its reviews
   health.py               sync health: each site's state, warnings and activity
   overrides.py            blocks reading the private keys through frappe.client.get_password
-  www/intelligence.py     serves the frontend page (login, System Manager, server mode)
+  www/intelligence.py     serves the frontend page (login, role, server mode)
+  roles.py                who can use the app: the Manager and User roles, the apps-screen tile and where it leads
   public/frontend/        the built frontend, committed so no site needs Node to install the app
   sync/
     client.py             collector, watermarks, daily check, scheduled job
@@ -410,7 +417,7 @@ accounts_intelligence/
     signing.py            canonical request string and signed replies
     server.py             request verification, nonce claim, handlers
     transport.py          outbound HTTPS calls with reply verification
-    admin.py              settings form actions (System Manager only)
+    admin.py              settings form actions (System Manager or Accounts Intelligence Manager)
     audit.py              Auth Log writer
   accounts_intelligence/doctype/
     accounts_intelligence_settings/       Single: mode, keys, connection
@@ -430,6 +437,7 @@ accounts_intelligence/
   tests/test_rpt.py           related-party register, sync and report
   tests/test_open_items.py    the open items queue and reviews
   tests/test_health.py        sync health
+  tests/test_roles.py         the two roles, the tile and the page
 frontend/                 React + Vite + Tailwind source of the /intelligence page
 ```
 
@@ -451,7 +459,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 140 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 148 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
@@ -462,7 +470,7 @@ The 140 tests build real HTTP requests and run them through the verification cod
 - key rotation: a successful switch, the old key alone being refused without the site URL, the proof bound to the request, and resuming an interrupted rotation without losing the new key;
 - Regenerate Key on a client and on the server;
 - data sync: only group-company documents are sent, resent batches are stored once, older copies never overwrite newer ones, a failed send keeps the watermark, the start date and interval, the daily check and resync;
-- reconciliation: invoices paired by full or trailing bill number and by date and amount, no guess when several fit, payments paired with payments or journals within 3 days, set-off journals left out, latest balances and the unexplained amount, System Manager only.
+- reconciliation: invoices paired by full or trailing bill number and by date and amount, no guess when several fit, payments paired with payments or journals within 3 days, set-off journals left out, latest balances and the unexplained amount, for System Managers and the two app roles.
 
 They pass on v15 and v16.
 

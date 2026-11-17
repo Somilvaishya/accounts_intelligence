@@ -19,6 +19,7 @@ import frappe
 from frappe import _
 from frappe.utils import getdate, today
 
+from accounts_intelligence import roles
 from accounts_intelligence.sync import ACCOUNT_ENTRY, BALANCE, ENTITY, RELATED_PARTY, TRANSACTION
 
 GROUP = "Group company"
@@ -29,7 +30,7 @@ COLUMNS = ("sales", "purchases", "received", "paid", "journals", "accounts")
 def report(from_date=None, to_date=None, company=None) -> dict:
 	"""Related-party transactions per group company and party. The period defaults to this financial
 	year (April to March) up to today."""
-	frappe.only_for("System Manager")
+	roles.check()
 	from_date, to_date = _period(from_date, to_date)
 	entities = {
 		e.name: e for e in frappe.get_all(ENTITY, fields=["name", "company_name"], order_by="company_name")

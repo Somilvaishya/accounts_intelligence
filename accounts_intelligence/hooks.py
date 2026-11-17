@@ -17,16 +17,21 @@ default_log_clearing_doctypes = {"Accounts Intelligence Auth Log": 180}
 # Refuse to hand this app's private keys to API callers; every other Password field works as before.
 override_whitelisted_methods = {"frappe.client.get_password": "accounts_intelligence.overrides.get_password"}
 
-# Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "accounts_intelligence",
-# 		"logo": "/assets/accounts_intelligence/logo.png",
-# 		"title": "Accounts Intelligence",
-# 		"route": "/accounts_intelligence",
-# 		"has_permission": "accounts_intelligence.api.permission.has_app_permission"
-# 	}
-# ]
+app_logo_url = "/assets/accounts_intelligence/images/accounts-intelligence-logo.svg"
+
+# The tile on the apps screen (/apps on v15, the desktop on v16), for a System Manager and the two app roles
+# (roles.py). It opens the dashboard: /intelligence on the group server, and on a company site the server's
+# dashboard. `desk_route` is v16's "Open in Desk" link under the tile, to the settings.
+add_to_apps_screen = [
+	{
+		"name": "accounts_intelligence",
+		"logo": app_logo_url,
+		"title": "Accounts Intelligence",
+		"route": "/intelligence",
+		"desk_route": "/app/accounts-intelligence-settings",
+		"has_permission": "accounts_intelligence.check_app_permission",
+	}
+]
 
 # Includes in <head>
 # ------------------
@@ -264,7 +269,7 @@ website_route_rules = [{"from_route": "/intelligence/<path:app_path>", "to_route
 
 # Is Related Party and Related Party PAN on Account (account.py). Added on install and kept current on every
 # migrate; removed on uninstall.
-after_install = "accounts_intelligence.account.setup"
-after_migrate = ["accounts_intelligence.account.setup"]
+after_install = ["accounts_intelligence.account.setup", "accounts_intelligence.roles.setup"]
+after_migrate = ["accounts_intelligence.account.setup", "accounts_intelligence.roles.setup"]
 before_uninstall = "accounts_intelligence.account.remove"
 doc_events = {"Account": {"validate": "accounts_intelligence.account.validate"}}

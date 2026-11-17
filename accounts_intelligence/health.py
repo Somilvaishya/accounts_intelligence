@@ -8,6 +8,7 @@ entries show the site's activity hour by hour.
 import frappe
 from frappe.utils import add_to_date, get_datetime, now_datetime
 
+from accounts_intelligence import roles
 from accounts_intelligence.auth import ALLOWED_SITE, AUTH_LOG, SETTINGS
 from accounts_intelligence.sync import DEFAULT_SYNC_EVERY, ENTITY, SYNC_EVERY, TRANSACTION
 
@@ -17,7 +18,7 @@ HOURS = 24
 @frappe.whitelist(methods=["GET"])
 def sites() -> dict:
 	"""Every allowed site with its state, companies, last sync, daily check, warnings and activity."""
-	frappe.only_for("System Manager")
+	roles.check()
 	now = now_datetime()
 	every = SYNC_EVERY.get(frappe.db.get_single_value(SETTINGS, "sync_every"), DEFAULT_SYNC_EVERY)
 	rows = frappe.db.get_all(
