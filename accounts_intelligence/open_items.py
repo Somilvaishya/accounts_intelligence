@@ -10,7 +10,7 @@ import frappe
 from frappe import _
 from frappe.utils import getdate, now_datetime
 
-from accounts_intelligence import reconcile
+from accounts_intelligence import reconcile, roles
 from accounts_intelligence.reconcile import OPEN_ITEM
 from accounts_intelligence.sync import ENTITY
 
@@ -20,7 +20,7 @@ STATUSES = ("Open", "In progress", "Explained")
 @frappe.whitelist(methods=["GET"])
 def items(from_date=None, to_date=None) -> dict:
 	"""Every open line with its pair, age in days and review, and the people it can be assigned to."""
-	frappe.only_for("System Manager")
+	roles.check()
 	today = getdate()
 	result = []
 	for a, b in reconcile.pairs():
@@ -37,7 +37,7 @@ def items(from_date=None, to_date=None) -> dict:
 def review(a, b, key, status="Open", assigned_to=None, reason=None, note=None) -> dict:
 	"""Save the review of one open line. The line is looked up again here, so only a line that really is
 	open can be reviewed, and its description comes from the books, not from the request."""
-	frappe.only_for("System Manager")
+	roles.check()
 	if status not in STATUSES:
 		frappe.throw(_("{0} is not a status.").format(status))
 	if assigned_to and assigned_to not in {u["name"] for u in _users()}:
@@ -77,8 +77,8 @@ def review(a, b, key, status="Open", assigned_to=None, reason=None, note=None) -
 
 
 def _users() -> list[dict]:
-	"""Enabled users who can open Accounts Intelligence: System Managers."""
-	names = frappe.get_all("Has Role", {"role": "System Manager", "parenttype": "User"}, pluck="parent")
+	"""Enabled users who can open Accounts Intelligence: System Managers and the Accounts Intelligence User role."""
+	names = roles.users()
 	return frappe.get_all(
 		"User",
 		{"name": ("in", names), "enabled": 1, "user_type": "System User"},

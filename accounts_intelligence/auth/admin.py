@@ -1,10 +1,11 @@
-"""Admin actions behind the settings form buttons. System Manager only."""
+"""Admin actions behind the settings form buttons. System Manager or Accounts Intelligence Manager only."""
 
 import frappe
 from frappe import _
 from frappe.utils import now_datetime
 from frappe.utils.password import get_decrypted_password, remove_encrypted_password, set_encrypted_password
 
+from accounts_intelligence import roles
 from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS, audit, keys, signing, transport
 
 CLIENT_STATUS = {"Pending": "Waiting for approval", "Active": "Connected"}
@@ -85,7 +86,7 @@ def client_sync_now():
 
 @frappe.whitelist(methods=["POST"])
 def client_reset():
-	frappe.only_for("System Manager")
+	roles.check_manager()
 	frappe.db.set_single_value(
 		SETTINGS,
 		{
@@ -168,7 +169,7 @@ def client_rotate_key():
 @frappe.whitelist(methods=["POST"])
 def regenerate_key():
 	"""Replace this site's key pair outright, for when the private key may be known to someone else."""
-	frappe.only_for("System Manager")
+	roles.check_manager()
 	settings = frappe.get_single(SETTINGS)
 	if not settings.mode:
 		frappe.throw(_("Choose and save this site's mode first."))
@@ -261,7 +262,7 @@ def _commit():
 
 
 def _client_settings():
-	frappe.only_for("System Manager")
+	roles.check_manager()
 	settings = frappe.get_single(SETTINGS)
 	if settings.mode != "Client":
 		frappe.throw(_("This site is not in Client mode."))
@@ -336,7 +337,7 @@ def server_resync(rows):
 
 
 def _server_update(rows, action, fingerprints=None):
-	frappe.only_for("System Manager")
+	roles.check_manager()
 	if frappe.db.get_single_value(SETTINGS, "mode") != "Server":
 		frappe.throw(_("This site is not in Server mode."))
 	names = frappe.parse_json(rows) if isinstance(rows, str) else rows

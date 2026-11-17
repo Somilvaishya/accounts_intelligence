@@ -39,7 +39,7 @@
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-11-05 10:00:00.000000",
+ "modified": "2026-11-17 07:36:13.466235",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Entity",
@@ -51,6 +51,18 @@
    "read": 1,
    "report": 1,
    "role": "System Manager"
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Intelligence User"
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Intelligence Manager"
   }
  ],
  "show_title_field_in_link": 1,

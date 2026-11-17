@@ -8,7 +8,7 @@ most two calls:
 2. answer: our code runs the tool on the reconciled data, and the model words the answer from that result.
 
 The model never writes a query, never does the arithmetic (amounts and who owes whom arrive worked out) and
-sees nothing but the tool's result. Only a System Manager can ask, as for the dashboard. Nothing is stored
+sees nothing but the tool's result. Only the dashboard's users can ask (roles.py). Nothing is stored
 here: the conversation lives in the browser and comes back with each question, and AI Interface logs the
 calls.
 """
@@ -20,7 +20,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_days, getdate, today
 
-from accounts_intelligence import reconcile, rpt
+from accounts_intelligence import reconcile, roles, rpt
 from accounts_intelligence.sync import ENTITY
 
 CALLING_APP = "accounts_intelligence"
@@ -34,7 +34,7 @@ SHOWN_LINES = 10
 @frappe.whitelist(methods=["GET"])
 def status() -> dict:
 	"""Whether the assistant can answer, and why not if it cannot."""
-	frappe.only_for("System Manager")
+	roles.check()
 	reason = _unavailable()
 	return {"available": not reason, "reason": reason}
 
@@ -43,7 +43,7 @@ def status() -> dict:
 def ask(question: str, history: str | list | None = None) -> dict:
 	"""Answer a question about the group's reconciliation. `history` is the recent turns the page keeps, as
 	[{"question", "answer"}]."""
-	frappe.only_for("System Manager")
+	roles.check()
 	reason = _unavailable()
 	if reason:
 		return {"ok": False, "answer": reason}

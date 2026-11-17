@@ -17,6 +17,7 @@ from datetime import date
 import frappe
 from frappe.utils import add_to_date, getdate, now_datetime
 
+from accounts_intelligence import roles
 from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS
 from accounts_intelligence.sync import (
 	ACCOUNT_ENTRY,
@@ -51,7 +52,7 @@ AGEING = ((30, "0-30 days"), (90, "31-90 days"), (180, "91-180 days"), (None, "O
 def dashboard(from_date=None, to_date=None) -> dict:
 	"""Every pair of group companies with data and how far their books agree, the group's lines per month
 	and open lines by age, and how the company sites are syncing."""
-	frappe.only_for("System Manager")
+	roles.check()
 	result, months, ageing = [], {}, [{"bucket": label, "count": 0, "amount": 0.0} for _, label in AGEING]
 	for a, b in pairs():
 		data = reconcile(a, b, from_date, to_date)
@@ -107,7 +108,7 @@ def _sync_health() -> dict:
 @frappe.whitelist(methods=["GET"])
 def pair(a, b, from_date=None, to_date=None) -> dict:
 	"""Every invoice and money line between companies a and b (PANs), matched or not."""
-	frappe.only_for("System Manager")
+	roles.check()
 	if not a or not b or a == b or not frappe.db.exists(ENTITY, a) or not frappe.db.exists(ENTITY, b):
 		frappe.throw("Choose two different group companies.")
 	return reconcile(a, b, from_date, to_date)

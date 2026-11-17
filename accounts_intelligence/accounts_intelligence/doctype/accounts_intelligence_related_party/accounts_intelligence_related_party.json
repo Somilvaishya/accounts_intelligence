@@ -68,7 +68,7 @@
   }
  ],
  "links": [],
- "modified": "2026-11-12 10:00:00.000000",
+ "modified": "2026-11-17 07:36:13.466595",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Related Party",
@@ -85,6 +85,19 @@
    "read": 1,
    "report": 1,
    "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Intelligence Manager",
    "share": 1,
    "write": 1
   }
