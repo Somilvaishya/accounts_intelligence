@@ -112,21 +112,33 @@ export function docUrl(doc: Doc, company: Company) {
   return `${company.site_url.replace(/\/$/, "")}/app/${slug}/${encodeURIComponent(doc.name)}`;
 }
 
-/** The lines as CSV rows, header first. */
+/** A side's documents: all of a manual match's, otherwise the one the line has. */
+export function lineDocs(line: Line, side: "a" | "b"): Doc[] {
+  const many = side === "a" ? line.a_docs : line.b_docs;
+  const one = side === "a" ? line.a : line.b;
+  return many ?? (one ? [one] : []);
+}
+
+/** The lines as CSV rows, header first. A manual match's documents share one cell each, joined by " + ". */
 export function csvRows(lines: Line[], a: Company, b: Company) {
-  const side = (doc: Doc | null) => [
-    doc?.doctype ?? "",
-    doc?.name ?? "",
-    doc?.date ?? "",
-    doc?.amount ?? "",
-    doc?.bill_no ?? doc?.reference_no ?? "",
+  const join = (docs: Doc[], value: (doc: Doc) => string | number | undefined) =>
+    docs.map((doc) => value(doc) ?? "").join(" + ");
+  const side = (docs: Doc[]) => [
+    join(docs, (doc) => doc.doctype),
+    join(docs, (doc) => doc.name),
+    join(docs, (doc) => doc.date),
+    docs.length ? Math.round(docs.reduce((sum, doc) => sum + doc.amount, 0) * 100) / 100 : "",
+    join(docs, (doc) => doc.bill_no ?? doc.reference_no),
   ];
   const header = ["Date", "Type", "Status"];
   for (const company of [a, b]) {
     const name = short(company.name);
     header.push(`${name} document type`, `${name} document`, `${name} date`, `${name} amount`, `${name} bill / reference`);
   }
-  header.push("Difference");
-  const rows = lines.map((l) => [l.date, l.kind, statusLabel(l.status, a, b), ...side(l.a), ...side(l.b), l.difference]);
+  header.push("Difference", "Reconciled by hand");
+  const rows = lines.map((l) => [
+    l.date, l.kind, statusLabel(l.status, a, b), ...side(lineDocs(l, "a")), ...side(lineDocs(l, "b")), l.difference,
+    l.match ? [l.match.by_name ?? l.match.by, l.match.on?.slice(0, 10), l.match.note].filter(Boolean).join(" · ") : "",
+  ]);
   return [header, ...rows];
 }

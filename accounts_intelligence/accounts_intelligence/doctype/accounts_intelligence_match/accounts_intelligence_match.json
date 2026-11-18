@@ -1,0 +1,131 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-11-18 10:00:00.000000",
+ "description": "Documents someone reconciled by hand on the pair page: entries the automatic matching leaves open, such as the same amount booked on different days. Created and undone from the pair page, which checks that the documents are open and their totals agree.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "pair_a",
+  "pair_b",
+  "kind",
+  "amount",
+  "difference",
+  "column_break_match",
+  "matched_by",
+  "matched_on",
+  "note",
+  "section_documents",
+  "documents"
+ ],
+ "fields": [
+  {
+   "fieldname": "pair_a",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Company A PAN",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pair_b",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Company B PAN",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type",
+   "options": "Invoice\nMoney",
+   "read_only": 1
+  },
+  {
+   "description": "The total of one side.",
+   "fieldname": "amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount",
+   "read_only": 1
+  },
+  {
+   "description": "What the two sides differ by when matched; at most ₹1.",
+   "fieldname": "difference",
+   "fieldtype": "Currency",
+   "label": "Difference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_match",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "matched_by",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Matched By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "matched_on",
+   "fieldtype": "Datetime",
+   "label": "Matched On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_documents",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "documents",
+   "fieldtype": "Table",
+   "label": "Documents",
+   "options": "Accounts Intelligence Match Document",
+   "read_only": 1
+  }
+ ],
+ "in_create": 1,
+ "links": [],
+ "modified": "2026-11-18 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Accounts Intelligence",
+ "name": "Accounts Intelligence Match",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Intelligence Manager"
+  },
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Intelligence User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
