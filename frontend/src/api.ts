@@ -30,12 +30,25 @@ export interface Review {
   note: string | null;
 }
 
+/** Who reconciled a line by hand on the pair page, and when. */
+export interface ManualMatch {
+  name: string;
+  by: string | null;
+  by_name: string | null;
+  on: string | null;
+  note: string | null;
+}
+
 export interface Line {
   kind: "Invoice" | "Money";
   status: Status;
   date: string;
+  /** The first document on each side; a manual match lists all of them in a_docs and b_docs. */
   a: Doc | null;
   b: Doc | null;
+  a_docs?: Doc[];
+  b_docs?: Doc[];
+  match?: ManualMatch;
   difference: number;
   /** Stable across reloads: the review of an open line is saved under it. */
   key: string;
@@ -66,6 +79,8 @@ export interface Summary {
   money: Counts;
   open: number;
   explained: number;
+  /** Matched lines someone reconciled by hand. */
+  manual: number;
   balance_difference: number;
   unexplained: number | null;
 }
@@ -95,6 +110,13 @@ export interface Trend {
   ageing: AgeBucket[];
 }
 
+/** A match made by hand that no longer holds, such as one whose document was cancelled. */
+export interface BrokenMatch extends ManualMatch {
+  kind: Line["kind"];
+  reason: string;
+  documents: { entity: string; doctype: string; name: string }[];
+}
+
 export interface PairResult {
   a: Company;
   b: Company;
@@ -102,6 +124,7 @@ export interface PairResult {
   balance: Balance;
   trend: Trend;
   lines: Line[];
+  broken_matches: BrokenMatch[];
 }
 
 export interface PairRow {
@@ -184,6 +207,10 @@ function serverMessage(body: { _server_messages?: string; exception?: string }):
 
 export const getDashboard = (period: Period) => call<Dashboard>("reconcile.dashboard", { ...period });
 export const getPair = (a: string, b: string, period: Period) => call<PairResult>("reconcile.pair", { a, b, ...period });
+/** Reconcile open documents of both companies by hand. The server checks they are open and their totals agree. */
+export const reconcileByHand = (a: string, b: string, documents: { entity: string; doctype: string; name: string }[], note: string) =>
+  call<{ name: string }>("reconcile.match", { a, b, documents: JSON.stringify(documents), note }, true);
+export const undoMatch = (name: string) => call<{ name: string }>("reconcile.unmatch", { name }, true);
 export interface RptRow {
   company: { pan: string; name: string };
   party: { pan: string; name: string; relationship: string; related_from?: string | null; related_until?: string | null };

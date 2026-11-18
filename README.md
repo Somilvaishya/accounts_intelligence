@@ -161,6 +161,16 @@ A System Manager can do everything, as before. All three see the Accounts Intell
 
 It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `accounts_intelligence.reconcile.pair`, both GET, for the roles above.
 
+**Reconciling by hand.** The automatic matching leaves some entries open on purpose: the same amount booked on days too far apart (invoices on different dates without a bill number, payments more than 3 days apart), several entries of the same amount where it cannot tell which goes with which, or one invoice booked as two on the other side. On the pair page these can be matched by hand:
+- Tick open entries of both companies, or use **Find match** on a line: it picks the line's entries and shows only the entries that would close the gap, marked **Fits**, whatever their date.
+- Any number on each side (400 + 400 against 800), all invoices or all payments and journals. Invoices go one way: the seller's sales invoices against the buyer's purchase invoices.
+- The totals must agree within ₹1; a real difference is explained on Open Items instead. A note saying why the entries belong together is required, for the audit. **Reconcile** saves an **Accounts Intelligence Match** with who did it, when, the note and the documents. Entries in different financial years, or more than 90 days apart, get a warning to check the timing difference.
+- The match becomes one matched line, marked "By hand" with an **Undo**. Its documents are taken out before the automatic matching, so the rest still matches as before. When a period is picked, a match shows whole if one of its documents is in the period.
+- A match stops counting when one of its documents is cancelled or no longer synced, is in an older match too, or its amount changes so the sides no longer agree. Its documents are then matched automatically again, or open, and the pair page lists the match under **A match made by hand no longer holds** with the reason and an Undo. The pair page also counts the matched lines made by hand ("Matched 12 · 2 by hand"), and the assistant sees every document of a match and who made it.
+- Reconciling by hand never changes the balances or the unexplained amount: the books are as they were, and the open lines are only explained differently.
+
+Endpoints: `accounts_intelligence.reconcile.match` and `accounts_intelligence.reconcile.unmatch`, both POST, for the roles above. The server looks the documents up again and refuses one that is not open now, so the amounts come from the books and not from the request. Matches for one pair are made one at a time (a row lock on the two companies), so two people cannot match the same entries twice.
+
 ### Sync health
 
 **Sync health** in the frontend shows every company site on the server's list, on one page.
@@ -428,6 +438,8 @@ accounts_intelligence/
     accounts_intelligence_balance/        server: balances with group companies
     accounts_intelligence_related_party/  server: the related-party register
     accounts_intelligence_open_item/      server: reviews of open reconciliation lines
+    accounts_intelligence_match/          server: documents reconciled by hand on the pair page
+    accounts_intelligence_match_document/ child table: the documents of a match
   tests/test_auth.py          authentication
   tests/test_key_rotation.py  key rotation and regeneration
   tests/test_hardening.py     security audit fixes
@@ -436,6 +448,7 @@ accounts_intelligence/
   tests/test_assistant.py     the assistant, with the AI calls replaced
   tests/test_rpt.py           related-party register, sync and report
   tests/test_open_items.py    the open items queue and reviews
+  tests/test_manual_match.py  reconciling by hand, undo, broken and duplicate matches, periods, the note
   tests/test_health.py        sync health
   tests/test_roles.py         the two roles, the tile and the page
 frontend/                 React + Vite + Tailwind source of the /intelligence page
@@ -459,7 +472,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 148 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 161 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
@@ -470,7 +483,7 @@ The 148 tests build real HTTP requests and run them through the verification cod
 - key rotation: a successful switch, the old key alone being refused without the site URL, the proof bound to the request, and resuming an interrupted rotation without losing the new key;
 - Regenerate Key on a client and on the server;
 - data sync: only group-company documents are sent, resent batches are stored once, older copies never overwrite newer ones, a failed send keeps the watermark, the start date and interval, the daily check and resync;
-- reconciliation: invoices paired by full or trailing bill number and by date and amount, no guess when several fit, payments paired with payments or journals within 3 days, set-off journals left out, latest balances and the unexplained amount, for System Managers and the two app roles.
+- reconciliation: invoices paired by full or trailing bill number and by date and amount, no guess when several fit, payments paired with payments or journals within 3 days, set-off journals left out, latest balances and the unexplained amount, matches made by hand (many to many, totals within ₹1, only open documents, undo, and a match that stops counting when a document is cancelled or changed), for System Managers and the two app roles.
 
 They pass on v15 and v16.
 

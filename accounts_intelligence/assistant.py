@@ -266,7 +266,7 @@ def find_document(companies, text) -> tuple[dict, list]:
 	for x, y in reconcile.pairs():
 		data = reconcile.reconcile(x, y)
 		for line in data["lines"]:
-			docs = [d for d in (line["a"], line["b"]) if d]
+			docs = reconcile.line_docs(line, "a") + reconcile.line_docs(line, "b")
 			values = [str(d.get(k) or "").lower() for d in docs for k in ("name", "bill_no", "reference_no")]
 			if any(needle in v for v in values):
 				found.append(_line(line, data, companies))
@@ -393,14 +393,23 @@ def _line_facts(line) -> dict:
 		ref = f", bill {d['bill_no']}" if d.get("bill_no") else ""
 		return f"{d['doctype']} {d['name']} dated {d['date']} for {_inr(abs(d['amount']))}{ref}"
 
+	def side(name):
+		# A manual match can hold several documents a side.
+		docs = reconcile.line_docs(line, name)
+		return [doc(d) for d in docs] if len(docs) > 1 else doc(docs[0] if docs else None)
+
 	a, b = line["pair"]["a"], line["pair"]["b"]
 	facts = {
 		"date": line["date"],
 		"status": line["status_label"],
-		f"{_acronym(a['name'])}": doc(line["a"]),
-		f"{_acronym(b['name'])}": doc(line["b"]),
+		f"{_acronym(a['name'])}": side("a"),
+		f"{_acronym(b['name'])}": side("b"),
 		"difference": _inr(abs(line["difference"])),
 	}
+	match = line.get("match")
+	if match:
+		parts = [match.get("by_name") or match.get("by"), (match.get("on") or "")[:10], match.get("note")]
+		facts["reconciled_by_hand"] = "; ".join(p for p in parts if p)
 	review = line.get("review")
 	if review and (review["status"] != "Open" or review["assigned_to"]):
 		parts = [review["status"], review["reason"], review["note"]]
