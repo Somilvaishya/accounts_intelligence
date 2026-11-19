@@ -143,6 +143,57 @@ export interface SyncHealth {
 export interface Dashboard extends Trend {
   pairs: PairRow[];
   sync: SyncHealth;
+  /** Companies whose site sent transfers between its own branches (BNS). */
+  internal?: InternalCompany[];
+}
+
+export type TransferStatus = "Not received" | "Amount differs" | "Check party" | "Not dispatched";
+
+export interface TransferTotals {
+  count: number;
+  amount: number;
+}
+
+/** One company's transfers between its own branches, as of its site's last sync. */
+export interface InternalSummary {
+  documents: number;
+  sent: number;
+  not_received: TransferTotals;
+  amount_differs: TransferTotals;
+  check_party: TransferTotals;
+  not_dispatched: TransferTotals;
+  debtor: number | null;
+  creditor: number | null;
+  debtor_account: string | null;
+  creditor_account: string | null;
+  /** Internal Debtor plus Internal Creditor: zero once every transfer is booked on both sides. */
+  gap: number | null;
+  explained: number | null;
+  unexplained: number | null;
+  truncated: boolean;
+  received_on?: string;
+}
+
+export interface InternalCompany {
+  company: Company;
+  summary: InternalSummary;
+}
+
+export interface Transfer {
+  entity: string;
+  status: TransferStatus;
+  kind: "Invoice" | "Delivery";
+  source_doctype: string;
+  source_name: string;
+  posting_date: string;
+  party: string;
+  from_gstin: string;
+  to_gstin: string;
+  sent: number;
+  received: number;
+  difference: number;
+  receivers: string;
+  note: string;
 }
 
 export interface Period {
@@ -277,7 +328,10 @@ export interface SiteHealth {
 export const getSyncHealth = () =>
   call<{ sync_every: number; server_time: string; sites: SiteHealth[] }>("health.sites", {});
 
-export const getRpt = (period: Period, company?: string) => call<RptReport>("rpt.report", { ...period, company });
+export const getInternalTransfers = () =>
+  call<{ companies: InternalCompany[]; items: Transfer[] }>("internal_transfers.transfers", {});
+
+export const getRpt =(period: Period, company?: string) => call<RptReport>("rpt.report", { ...period, company });
 export const getAssistantStatus =() => call<{ available: boolean; reason: string | null }>("assistant.status", {});
 export const ask = (question: string, history: { question: string; answer: string }[]) =>
   call<Answer>("assistant.ask", { question, history: JSON.stringify(history) }, true);

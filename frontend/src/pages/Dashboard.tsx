@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { Counts, PairRow } from "../api";
+import type { Counts, InternalCompany, PairRow } from "../api";
 import { AgeingBars, GapBars, MonthBars, Network } from "../components/Charts";
 import Icon, { type IconName } from "../components/Icon";
-import { TONE, TONE_TEXT, acronym, ago, gapTone, money, moneyShort, short } from "../format";
+import { TONE, TONE_TEXT, acronym, ago, gapTone, money, moneyShort, short, transfersToLook } from "../format";
 import { Message, PeriodFilter, downloadCsv, useShell } from "../Layout";
 
 const open = (c: Counts) => c.amount_differs + c.date_differs + c.only_a + c.only_b;
@@ -63,6 +63,7 @@ export default function Dashboard() {
           <PairsTable pairs={pairs} query={query} />
         </div>
       )}
+      {!!data?.internal?.length && <InternalTable rows={data.internal} query={query} />}
     </div>
   );
 }
@@ -188,6 +189,62 @@ function PairsTable({ pairs, query }: { pairs: PairRow[]; query: string }) {
                   <td className="px-4 py-3 text-right tabular-nums text-ink-2">
                     {summary.unexplained == null ? <span title="Shown for all dates only">—</span> : money(summary.unexplained)}
                   </td>
+                  <td className="pr-3 text-ink-3 group-hover:text-accent"><Icon name="chevronRight" /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function InternalTable({ rows, query }: { rows: InternalCompany[]; query: string }) {
+  const navigate = useNavigate();
+  return (
+    <section className="card overflow-hidden">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="font-semibold tracking-tight">Internal transfers</h2>
+        <p className="text-xs text-ink-3">Between each company's own branches, as of its last sync</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead className="bg-sunken/60 text-left">
+            <tr className="caps">
+              <th className="px-4 py-2.5 font-semibold">Company</th>
+              <th className="px-4 py-2.5 font-semibold">Transfers</th>
+              <th className="px-4 py-2.5 text-right font-semibold">Not received</th>
+              <th className="px-4 py-2.5 text-right font-semibold">Ledger gap</th>
+              <th className="px-4 py-2.5 text-right font-semibold">Unexplained</th>
+              <th className="w-10" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map(({ company, summary: s }) => {
+              const issues = transfersToLook(s);
+              const to = `/internal-transfers${query ? `${query}&` : "?"}company=${company.pan}`;
+              return (
+                <tr key={company.pan} className="group cursor-pointer hover:bg-sunken/60" onClick={() => navigate(to)}>
+                  <td className="px-4 py-3">
+                    <span className="font-medium group-hover:text-accent">{short(company.name)}</span>
+                    <div className="text-xs tabular-nums text-ink-3">{company.pan}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="rounded-md bg-sunken px-2 py-0.5 text-xs font-medium tabular-nums text-ink-2">{s.documents} sent</span>
+                      {issues > 0 ? (
+                        <span className={`rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums ring-1 ring-inset ${TONE.bad}`}>{issues} to look at</span>
+                      ) : (
+                        <span className={`rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${TONE.good}`}>all booked</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className={`px-4 py-3 text-right tabular-nums ${s.not_received.count ? `font-semibold ${TONE_TEXT.bad}` : "text-ink-2"}`}>
+                    {money(s.not_received.amount)}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">{money(s.gap)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-ink-2">{money(s.unexplained)}</td>
                   <td className="pr-3 text-ink-3 group-hover:text-accent"><Icon name="chevronRight" /></td>
                 </tr>
               );

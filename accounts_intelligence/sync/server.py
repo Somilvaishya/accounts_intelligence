@@ -14,6 +14,7 @@ from datetime import date, datetime
 import frappe
 from frappe.utils import now_datetime
 
+from accounts_intelligence import internal_transfers
 from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS, audit
 from accounts_intelligence.auth.server import Rejected
 from accounts_intelligence.sync import (
@@ -163,6 +164,8 @@ def sync_handler(request) -> dict:
 		"skipped": skipped[:MAX_SKIPPED],
 		"skipped_count": len(skipped),
 	}
+	if "internal" in request.data:
+		reply["internal"] = internal_transfers.store(request.data["internal"], own)
 	if "check" in request.data:
 		reply["differences"], values["last_check"] = _check(
 			request.data["check"], own, site_rules(request.row.name)["sync_from"]

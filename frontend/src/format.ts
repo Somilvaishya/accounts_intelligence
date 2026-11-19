@@ -1,4 +1,4 @@
-import type { Company, Doc, Line, Status } from "./api";
+import type { Company, Doc, InternalSummary, Line, Status } from "./api";
 
 const rupees = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -84,6 +84,23 @@ export const TONE_TEXT = {
   warn: "text-amber-700 dark:text-amber-400",
   bad: "text-rose-700 dark:text-rose-400",
 };
+
+// The state a GSTIN is registered in, from its first two digits.
+const STATES: Record<string, string> = {
+  "01": "J&K", "02": "Himachal", "03": "Punjab", "04": "Chandigarh", "05": "Uttarakhand", "06": "Haryana",
+  "07": "Delhi", "08": "Rajasthan", "09": "UP", "10": "Bihar", "11": "Sikkim", "12": "Arunachal",
+  "13": "Nagaland", "14": "Manipur", "15": "Mizoram", "16": "Tripura", "17": "Meghalaya", "18": "Assam",
+  "19": "West Bengal", "20": "Jharkhand", "21": "Odisha", "22": "Chhattisgarh", "23": "MP", "24": "Gujarat",
+  "26": "DNH & DD", "27": "Maharashtra", "29": "Karnataka", "30": "Goa", "31": "Lakshadweep", "32": "Kerala",
+  "33": "Tamil Nadu", "34": "Puducherry", "35": "Andaman", "36": "Telangana", "37": "Andhra", "38": "Ladakh",
+};
+
+/** Internal transfers of one company that need a look. */
+export const transfersToLook = (s: InternalSummary) =>
+  s.not_received.count + s.amount_differs.count + s.check_party.count + s.not_dispatched.count;
+
+/** "09AANCR4593B1Z2" → "UP"; the GSTIN itself when the state is unknown, a dash when there is none. */
+export const branch = (gstin: string | null | undefined) => (gstin ? STATES[gstin.slice(0, 2)] ?? gstin : "—");
 
 /** "Garg Global Spices Private Limited" → "Garg Global Spices". */
 export function short(name: string) {

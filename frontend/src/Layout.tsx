@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useOutletContext, useSearchParams } from "react-
 import { getDashboard, useLoad, type Dashboard, type Period } from "./api";
 import Chat from "./components/Chat";
 import Icon from "./components/Icon";
-import { acronym, ago, gapTone } from "./format";
+import { acronym, ago, gapTone, transfersToLook } from "./format";
 
 export interface Shell {
   dashboard: { data?: Dashboard; error?: string; loading: boolean };
@@ -117,6 +117,7 @@ function Sidebar({ dashboard, query, open, onClose }: { dashboard?: Dashboard; q
     }`;
   const sync = dashboard?.sync;
   const toReview = dashboard?.pairs.reduce((n, p) => n + p.summary.open - p.summary.explained, 0) ?? 0;
+  const transfers = dashboard?.internal?.reduce((n, c) => n + transfersToLook(c.summary), 0) ?? 0;
   const syncTone = !sync?.sites ? "bg-slate-400" : sync.late.length ? "bg-amber-500" : "bg-emerald-500";
 
   return (
@@ -142,6 +143,12 @@ function Sidebar({ dashboard, query, open, onClose }: { dashboard?: Dashboard; q
             <Icon name="alert" /> <span className="flex-1">Open items</span>
             {!!toReview && <span className="rounded-full bg-black/5 px-1.5 text-[11px] font-semibold tabular-nums dark:bg-white/10">{toReview}</span>}
           </NavLink>
+          {!!dashboard?.internal?.length && (
+            <NavLink to={`/internal-transfers${query}`} className={item} onClick={onClose}>
+              <Icon name="truck" /> <span className="flex-1">Internal transfers</span>
+              {!!transfers && <span className="rounded-full bg-black/5 px-1.5 text-[11px] font-semibold tabular-nums dark:bg-white/10">{transfers}</span>}
+            </NavLink>
+          )}
           <NavLink to={`/related-parties${query}`} className={item} onClick={onClose}>
             <Icon name="users" /> Related parties
           </NavLink>

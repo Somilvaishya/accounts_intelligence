@@ -8,7 +8,8 @@
  "field_order": [
   "company_name",
   "pan",
-  "site_url"
+  "site_url",
+  "internal_transfers"
  ],
  "fields": [
   {
@@ -35,11 +36,19 @@
    "label": "Site URL",
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "description": "The latest internal transfer summary the company's site sent: totals of transfers between its own branches and the internal debtor and creditor balances.",
+   "fieldname": "internal_transfers",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Internal Transfers",
+   "read_only": 1
   }
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-11-17 07:36:13.466235",
+ "modified": "2026-11-19 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Accounts Intelligence",
  "name": "Accounts Intelligence Entity",

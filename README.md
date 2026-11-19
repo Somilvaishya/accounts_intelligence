@@ -171,6 +171,22 @@ It reads two endpoints, `accounts_intelligence.reconcile.dashboard` and `account
 
 Endpoints: `accounts_intelligence.reconcile.match` and `accounts_intelligence.reconcile.unmatch`, both POST, for the roles above. The server looks the documents up again and refuses one that is not open now, so the amounts come from the books and not from the request. Matches for one pair are made one at a time (a row lock on the two companies), so two people cannot match the same entries twice.
 
+### Internal transfers
+
+Transfers between the branches of one company, made with Business Needed Solutions (BNS), are checked on the company's own site and shown on the server. They never involve another group company, so they are not part of any pair.
+
+**How BNS books them.** Between branches with different GSTINs, a sales invoice to the company's internal customer is answered by a purchase invoice from its internal supplier. Between branches with the same GSTIN, a delivery note is answered by a purchase receipt. The two are linked by `bns_inter_company_reference` on either document or both; a purchase receipt can also name the delivery note on its items. The sending branch debits the Internal Debtor account and the receiving branch credits the Internal Creditor account set in BNS Branch Accounting Settings, so the two add up to zero once every transfer is booked on both sides.
+
+**The check.** Each submitted sending document is paired with every submitted receiving document linked to it, in either direction. Documents one receipt answers together (one purchase receipt for two delivery notes) are compared as one. A sales invoice can carry the stock itself (update stock, answered by a purchase invoice that updates stock), or bill a delivery note whose goods arrive on a purchase receipt. In both cases the invoices carry the amount: a purchase receipt that names a sales invoice, and a delivery note an internal sales invoice bills with its receipt, only move stock and are left out. A transfer is listed when it is:
+- **Not received:** no submitted receiving document. One in draft is named in the note.
+- **Amount differs:** received for a different amount, beyond BNS's own tolerance (its setting for invoices, ₹1 when unset; ₹5 for deliveries). This includes one received twice.
+- **Check party:** the amounts agree, but a document is booked to a customer or supplier that is not the company's internal one.
+- **Not dispatched:** a submitted receiving document whose sending document is missing or not submitted.
+
+**Explaining the ledger.** Each transfer adds what was sent less what was received to Internal Debtor plus Internal Creditor. The gap less those differences is shown as unexplained. On real data the listed transfers explained the whole gap to the paisa.
+
+**Sync and pages.** The client checks at most once an hour, and sends the totals and the listed transfers (header fields only, at most 500) when they change, and at least once a day. A site without BNS sends nothing. A failed check is noted in the sync result and the Error Log, and the rest of the sync goes on. The server keeps the latest list per company in **Accounts Intelligence Internal Transfer**. The dashboard shows one row per company. The **Internal transfers** page lists what needs a look, filtered by status, with the branches by state, links to the documents and a CSV. Endpoint: `accounts_intelligence.internal_transfers.transfers` (GET, for the roles above).
+
 ### Sync health
 
 **Sync health** in the frontend shows every company site on the server's list, on one page.
@@ -413,6 +429,7 @@ accounts_intelligence/
   account.py              Is Related Party and Related Party PAN on Account
   rpt.py                  related-party transactions report
   open_items.py           the open items work queue and its reviews
+  internal_transfers.py   BNS transfers between a company's own branches: client check, server store, page
   health.py               sync health: each site's state, warnings and activity
   overrides.py            blocks reading the private keys through frappe.client.get_password
   www/intelligence.py     serves the frontend page (login, role, server mode)
@@ -440,6 +457,7 @@ accounts_intelligence/
     accounts_intelligence_open_item/      server: reviews of open reconciliation lines
     accounts_intelligence_match/          server: documents reconciled by hand on the pair page
     accounts_intelligence_match_document/ child table: the documents of a match
+    accounts_intelligence_internal_transfer/ server: branch transfers that need a look, per company
   tests/test_auth.py          authentication
   tests/test_key_rotation.py  key rotation and regeneration
   tests/test_hardening.py     security audit fixes
@@ -449,6 +467,7 @@ accounts_intelligence/
   tests/test_rpt.py           related-party register, sync and report
   tests/test_open_items.py    the open items queue and reviews
   tests/test_manual_match.py  reconciling by hand, undo, broken and duplicate matches, periods, the note
+  tests/test_internal_transfers.py  branch transfers: pairing, statuses, the ledger gap, store and send
   tests/test_health.py        sync health
   tests/test_roles.py         the two roles, the tile and the page
 frontend/                 React + Vite + Tailwind source of the /intelligence page
@@ -472,7 +491,7 @@ For `yarn dev`, log in on the bench's own address first. Set `BENCH_URL` if the 
 bench --site your-test-site run-tests --app accounts_intelligence
 ```
 
-The 161 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
+The 184 tests build real HTTP requests and run them through the verification code, and run full sync cycles against the server handlers. They cover:
 - URL rules;
 - tampered bodies and paths, and requests aimed at a different server;
 - replayed nonces, stale timestamps and the wrong key;
@@ -483,7 +502,8 @@ The 161 tests build real HTTP requests and run them through the verification cod
 - key rotation: a successful switch, the old key alone being refused without the site URL, the proof bound to the request, and resuming an interrupted rotation without losing the new key;
 - Regenerate Key on a client and on the server;
 - data sync: only group-company documents are sent, resent batches are stored once, older copies never overwrite newer ones, a failed send keeps the watermark, the start date and interval, the daily check and resync;
-- reconciliation: invoices paired by full or trailing bill number and by date and amount, no guess when several fit, payments paired with payments or journals within 3 days, set-off journals left out, latest balances and the unexplained amount, matches made by hand (many to many, totals within ₹1, only open documents, undo, and a match that stops counting when a document is cancelled or changed), for System Managers and the two app roles.
+- reconciliation: invoices paired by full or trailing bill number and by date and amount, no guess when several fit, payments paired with payments or journals within 3 days, set-off journals left out, latest balances and the unexplained amount, matches made by hand (many to many, totals within ₹1, only open documents, undo, and a match that stops counting when a document is cancelled or changed), for System Managers and the two app roles;
+- internal transfers: links from either side or the receipt items, one receipt for several deliveries, delivery notes billed by an invoice, not received with its draft, received twice or with an outside party, received in parts, BNS's tolerances, receipts without a sending document, the ledger gap explained, the hourly check, a failed check not stopping the sync, and a site storing only its own valid list.
 
 They pass on v15 and v16.
 
