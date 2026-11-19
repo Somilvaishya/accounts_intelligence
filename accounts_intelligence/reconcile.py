@@ -19,7 +19,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, fmt_money, getdate, now_datetime
 
-from accounts_intelligence import roles
+from accounts_intelligence import internal_transfers, roles
 from accounts_intelligence.auth import ALLOWED_SITE, SETTINGS
 from accounts_intelligence.sync import (
 	ACCOUNT_ENTRY,
@@ -81,6 +81,8 @@ def dashboard(from_date=None, to_date=None) -> dict:
 		"months": [months[key] for key in sorted(months)],
 		"ageing": ageing,
 		"sync": _sync_health(),
+		# Transfers between a company's own branches: as of each site's last sync, whatever the period.
+		"internal": internal_transfers.overview(),
 	}
 
 

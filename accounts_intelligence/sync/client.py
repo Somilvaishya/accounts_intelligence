@@ -16,7 +16,7 @@ import frappe
 from frappe.utils import add_to_date, flt, get_datetime, get_last_day, now_datetime, today
 from frappe.utils.password import get_decrypted_password
 
-from accounts_intelligence import account
+from accounts_intelligence import account, internal_transfers
 from accounts_intelligence.auth import SETTINGS, transport
 from accounts_intelligence.sync import (
 	ACCOUNT,
@@ -111,8 +111,12 @@ def _run(settings, deadline) -> str:
 					_save_state(state)
 			if time.monotonic() < deadline:
 				sent["balances"] = _send_balances(settings, state, companies, parties, notes)
-			if time.monotonic() < deadline and state.get("checked_on") != today():
-				notes += _daily_check(settings, state, companies, parties, sent)
+		# Transfers between this company's own branches need no group-company party, so they are sent even
+		# by a site with none yet.
+		if companies and time.monotonic() < deadline:
+			notes += _send_internal(settings, state, companies)
+		if companies and parties and time.monotonic() < deadline and state.get("checked_on") != today():
+			notes += _daily_check(settings, state, companies, parties, sent)
 		result = _summary(sent, notes, finished=time.monotonic() < deadline)
 	except transport.TransportError as e:
 		result = str(e)
@@ -124,6 +128,19 @@ def _run(settings, deadline) -> str:
 		result = "Sync stopped on an unexpected error. See the Error Log."
 	_save_state(state, result)
 	return result
+
+
+def _send_internal(settings, state, companies) -> list:
+	"""Internal transfers are a side check: a failure there is noted and the rest of the run goes on."""
+	try:
+		notes = internal_transfers.send(settings, state, companies, _send)
+	except transport.TransportError as e:
+		notes = [f"internal transfers not sent: {e}"]
+	except Exception:
+		frappe.log_error(title="Accounts Intelligence: internal transfer check failed")
+		notes = ["internal transfers could not be checked. See the Error Log."]
+	_save_state(state)
+	return notes
 
 
 # ── watch list ──────────────────────────────────────────────────────────────
@@ -153,7 +170,7 @@ def _refresh_config(settings, state) -> list:
 	# The server's admin asked for a full resync of this site.
 	resync = reply.get("resync")
 	if version != state.get("version") or earlier or (resync and resync != state.get("resync")):
-		state.update(version=version, watermarks={}, balances={})
+		state.update(version=version, watermarks={}, balances={}, internal_on=None, internal_checked=None)
 	state.update(
 		watch=reply.get("watch") or [],
 		names=reply.get("names") or {},

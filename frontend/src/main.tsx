@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import "./index.css";
 import Layout from "./Layout";
 import Dashboard from "./pages/Dashboard";
+import InternalTransfers from "./pages/InternalTransfers";
 import OpenItems from "./pages/OpenItems";
 import Pair from "./pages/Pair";
 import RelatedParties from "./pages/RelatedParties";
@@ -19,6 +20,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           <Route path="related-parties" element={<RelatedParties />} />
           <Route path="open-items" element={<OpenItems />} />
           <Route path="sync-health" element={<SyncHealth />} />
+          <Route path="internal-transfers" element={<InternalTransfers />} />
           <Route path="*" element={<Dashboard />} />
         </Route>
       </Routes>
